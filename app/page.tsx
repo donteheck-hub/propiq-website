@@ -42,6 +42,8 @@ export default function Home() {
   const [tab, setTab] = useState<'explore' | 'saved'>('explore');
   const [props, setProps] = useState<Prop[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
+  const [autoLogs, setAutoLogs] = useState<LogRow[]>([]);
+  const [historyStatus, setHistoryStatus] = useState('Loading historical game data...');
   const [status, setStatus] = useState<LiveStatus>('loading');
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
@@ -181,6 +183,40 @@ export default function Home() {
     }
   }, [hydrated, sport, refresh]);
 
+  // Pull historical stats from our own server, with CSV imports as a fallback.
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    setHistoryStatus(`Loading ${sport} game history...`);
+    fetch(`/api/history?sport=${sport}`, { cache: 'no-store' })
+      .then(async response => {
+        if (!response.ok) throw new Error('History endpoint unavailable');
+        return response.json();
+      })
+      .then(data => {
+        if (cancelled) return;
+        const rows = Array.isArray(data.rows) ? data.rows as LogRow[] : [];
+        setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...rows]);
+        setHistoryStatus(data.message || `${rows.length} historical rows loaded.`);
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryStatus('Automatic history unavailable. You can still import a CSV.');
+      });
+    return () => { cancelled = true; };
+  }, [hydrated, sport]);
+
+  const allLogs = useMemo(() => {
+    const map = new Map<string, LogRow>();
+    for (const row of autoLogs) {
+      map.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
+    }
+    // Manually imported rows take precedence for matching player/date/market.
+    for (const row of logs) {
+      map.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
+    }
+    return [...map.values()];
+  }, [logs, autoLogs]);
+
   const visible = useMemo(() => {
     return props
       .filter(p =>
@@ -197,7 +233,7 @@ export default function Home() {
       )
       .map(p => ({
         ...p,
-        stats: analyze(p, logs)
+        stats: analyze(p, allLogs)
       }))
       .filter(p =>
         minHit === 0 ||
@@ -210,10 +246,10 @@ export default function Home() {
       );
   }, [
     props, sport, tab, saved, market,
-    side, sportsbook, query, logs, minHit
+    side, sportsbook, query, allLogs, minHit
   ]);
 
-  const selectedStats = selected ? analyze(selected, logs) : null;
+  const selectedStats = selected ? analyze(selected, allLogs) : null;
 
   function importFile(f: File) {
     setImportError('');
@@ -440,7 +476,7 @@ export default function Home() {
               </div>
               <strong>
                 {sportProps.filter(
-                  p => analyze(p, logs).games.length > 0
+                  p => analyze(p, allLogs).games.length > 0
                 ).length}
               </strong>
               <small>Matching player and stat</small>
@@ -452,7 +488,7 @@ export default function Home() {
               </div>
               <strong>
                 {sportProps.filter(
-                  p => (analyze(p, logs).hit10?.pct ?? 0) >= 70
+                  p => (analyze(p, allLogs).hit10?.pct ?? 0) >= 70
                 ).length}
               </strong>
               <small>Historical rate, not a prediction</small>
@@ -463,9 +499,9 @@ export default function Home() {
                 GAME LOG ROWS <CalendarDays size={18} />
               </div>
               <strong>
-                {logs.filter(p => p.sport === sport).length}
+                {allLogs.filter(p => p.sport === sport).length}
               </strong>
-              <small>Saved in this browser</small>
+              <small>Available history rows</small>
             </div>
           </section>
 
@@ -474,6 +510,8 @@ export default function Home() {
               Last successful odds check: {lastUpdated}
             </p>
           )}
+
+          <div className="notice"><CircleHelp size={17} /><span>{historyStatus}</span></div>
 
           {notice && (
             <div className="notice">
