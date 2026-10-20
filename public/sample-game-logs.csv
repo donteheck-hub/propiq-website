@@ -1,0 +1,6 @@
+sport,player,marketKey,date,value,opponent
+NBA,Example Player,player_points,2026-10-01,27,BOS
+NBA,Example Player,player_points,2026-10-03,22,MIA
+NBA,Example Player,player_points,2026-10-05,31,NYK
+NFL,Example QB,player_pass_yds,2026-09-13,278,KC
+NFL,Example QB,player_pass_yds,2026-09-20,245,BUF
