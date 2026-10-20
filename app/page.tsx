@@ -32,6 +32,10 @@ function fmtOdds(n: number) {
 }
 
 type LiveStatus = 'loading' | 'live' | 'unavailable';
+type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
+
+const normalizeBook = (name: string) =>
+  name.toLowerCase().replace(/[^a-z]/g, '');
 
 export default function Home() {
   const [sport, setSport] = useState<Sport>('NBA');
@@ -43,6 +47,7 @@ export default function Home() {
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
   const [market, setMarket] = useState('all');
+  const [sportsbook, setSportsbook] = useState<SportsbookFilter>('both');
   const [side, setSide] = useState('all');
   const [minHit, setMinHit] = useState(0);
   const [selected, setSelected] = useState<Prop | null>(null);
@@ -183,6 +188,9 @@ export default function Home() {
         (tab === 'explore' || saved.includes(p.id)) &&
         (market === 'all' || p.marketKey === market) &&
         (side === 'all' || p.side === side) &&
+        (sportsbook === 'both'
+          ? ['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))
+          : normalizeBook(p.bookmaker) === sportsbook) &&
         `${p.player} ${p.event} ${p.bookmaker}`
           .toLowerCase()
           .includes(query.toLowerCase())
@@ -202,7 +210,7 @@ export default function Home() {
       );
   }, [
     props, sport, tab, saved, market,
-    side, query, logs, minHit
+    side, sportsbook, query, logs, minHit
   ]);
 
   const selectedStats = selected ? analyze(selected, logs) : null;
@@ -492,6 +500,19 @@ export default function Home() {
           </div>
 
           <div className="filters">
+            <label className="select-wrap">
+              <Filter size={16} />
+              <select
+                aria-label="Sportsbook"
+                value={sportsbook}
+                onChange={e => setSportsbook(e.target.value as SportsbookFilter)}
+              >
+                <option value="both">DraftKings + FanDuel</option>
+                <option value="draftkings">DraftKings only</option>
+                <option value="fanduel">FanDuel only</option>
+              </select>
+              <ChevronDown size={15} />
+            </label>
             <label className="search">
               <Search size={18} />
               <input
