@@ -13,6 +13,8 @@ import {
 } from '../lib/props';
 
 const STORAGE_KEY = 'prop-iq-v2';
+const PAGE_SIZE = 40;
+const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
 
 function Pill({
   children,
@@ -59,6 +61,7 @@ export default function Home() {
   const [importError, setImportError] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   const file = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
@@ -183,26 +186,36 @@ export default function Home() {
     }
   }, [hydrated, sport, refresh]);
 
-  // Pull historical stats from our own server, with CSV imports as a fallback.
+  // Historical data remains optional: live odds stay visible on failures.
   useEffect(() => {
     if (!hydrated) return;
-    let cancelled = false;
+    const controller = new AbortController();
     setHistoryStatus(`Loading ${sport} game history...`);
-    fetch(`/api/history?sport=${sport}`, { cache: 'no-store' })
-      .then(async response => {
-        if (!response.ok) throw new Error('History endpoint unavailable');
-        return response.json();
-      })
-      .then(data => {
-        if (cancelled) return;
-        const rows = Array.isArray(data.rows) ? data.rows as LogRow[] : [];
-        setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...rows]);
-        setHistoryStatus(data.message || `${rows.length} historical rows loaded.`);
-      })
-      .catch(() => {
-        if (!cancelled) setHistoryStatus('Automatic history unavailable. You can still import a CSV.');
-      });
-    return () => { cancelled = true; };
+    const timer = setTimeout(() => controller.abort(), 18000);
+    async function load() {
+      try {
+        const response = await fetch(`/api/history?sport=${sport}`, {
+          cache: 'no-store', signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`History API returned ${response.status}`);
+        // Do not parse an unexpectedly large response on the UI thread.
+        const size = Number(response.headers.get('content-length') || 0);
+        if (size > MAX_HISTORY_BYTES) throw new Error('History response is too large; server-side filtering is needed.');
+        const text = await response.text();
+        if (text.length > MAX_HISTORY_BYTES) throw new Error('History response is too large; server-side filtering is needed.');
+        const data = JSON.parse(text);
+        if (!Array.isArray(data.rows)) throw new Error('Invalid historical data response');
+        if (controller.signal.aborted) return;
+        setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...(data.rows as LogRow[])]);
+        setHistoryStatus(data.message || `${data.rows.length} historical rows loaded.`);
+      } catch (error) {
+        if (!controller.signal.aborted) setHistoryStatus(
+          error instanceof Error ? `History unavailable: ${error.message}` : 'Automatic history unavailable. You can still import a CSV.'
+        );
+      } finally { clearTimeout(timer); }
+    }
+    void load();
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [hydrated, sport]);
 
   const allLogs = useMemo(() => {
@@ -210,46 +223,62 @@ export default function Home() {
     for (const row of autoLogs) {
       map.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
     }
-    // Manually imported rows take precedence for matching player/date/market.
     for (const row of logs) {
       map.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
     }
     return [...map.values()];
   }, [logs, autoLogs]);
 
-  const visible = useMemo(() => {
-    return props
-      .filter(p =>
-        p.sport === sport &&
-        (tab === 'explore' || saved.includes(p.id)) &&
-        (market === 'all' || p.marketKey === market) &&
-        (side === 'all' || p.side === side) &&
-        (sportsbook === 'both'
-          ? ['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))
-          : normalizeBook(p.bookmaker) === sportsbook) &&
-        `${p.player} ${p.event} ${p.bookmaker}`
-          .toLowerCase()
-          .includes(query.toLowerCase())
-      )
-      .map(p => ({
-        ...p,
-        stats: analyze(p, allLogs)
-      }))
-      .filter(p =>
-        minHit === 0 ||
-        (p.stats.hit10?.pct ?? -1) >= minHit
-      )
-      .sort(
-        (a, b) =>
-          (b.stats.hit10?.pct ?? -1) -
-          (a.stats.hit10?.pct ?? -1)
-      );
-  }, [
-    props, sport, tab, saved, market,
-    side, sportsbook, query, allLogs, minHit
-  ]);
+  // Index game logs once, rather than scanning the entire dataset for each prop.
+  const logIndex = useMemo(() => {
+    const index = new Map<string, LogRow[]>();
+    for (const row of allLogs) {
+      const key = `${row.sport}|${row.player.trim().toLowerCase()}|${row.marketKey}`;
+      const current = index.get(key);
+      if (current) current.push(row);
+      else index.set(key, [row]);
+    }
+    return index;
+  }, [allLogs]);
 
-  const selectedStats = selected ? analyze(selected, allLogs) : null;
+  const analyzed = useMemo(() => {
+    const memo = new Map<string, ReturnType<typeof analyze>>();
+    return props.map(p => {
+      const key = `${p.sport}|${p.player.trim().toLowerCase()}|${p.marketKey}|${p.side}|${p.line}`;
+      let stats = memo.get(key);
+      if (!stats) {
+        const matching = logIndex.get(`${p.sport}|${p.player.trim().toLowerCase()}|${p.marketKey}`) || [];
+        stats = analyze(p, matching);
+        memo.set(key, stats);
+      }
+      return { ...p, stats };
+    });
+  }, [props, logIndex]);
+
+  const sportProps = useMemo(() => analyzed.filter(p => p.sport === sport), [analyzed, sport]);
+
+  const visible = useMemo(() => sportProps
+    .filter(p =>
+      (tab === 'explore' || saved.includes(p.id)) &&
+      (market === 'all' || p.marketKey === market) &&
+      (side === 'all' || p.side === side) &&
+      (sportsbook === 'both'
+        ? ['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))
+        : normalizeBook(p.bookmaker) === sportsbook) &&
+      `${p.player} ${p.event} ${p.bookmaker}`.toLowerCase().includes(query.toLowerCase()) &&
+      (minHit === 0 || (p.stats.hit10?.pct ?? -1) >= minHit)
+    )
+    .sort((a, b) => (b.stats.hit10?.pct ?? -1) - (a.stats.hit10?.pct ?? -1)),
+    [sportProps, tab, saved, market, side, sportsbook, query, minHit]
+  );
+
+  useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit]);
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const displayed = useMemo(() => visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), [visible, safePage]);
+  const selectedStats = useMemo(() => selected ? analyze(selected,
+    logIndex.get(`${selected.sport}|${selected.player.trim().toLowerCase()}|${selected.marketKey}`) || []
+  ) : null, [selected, logIndex]);
 
   function importFile(f: File) {
     setImportError('');
@@ -323,7 +352,6 @@ export default function Home() {
     setModal(false);
   }
 
-  const sportProps = props.filter(p => p.sport === sport);
 
   return (
     <div className="shell">
@@ -475,9 +503,7 @@ export default function Home() {
                 WITH GAME HISTORY <TrendingUp size={18} />
               </div>
               <strong>
-                {sportProps.filter(
-                  p => analyze(p, allLogs).games.length > 0
-                ).length}
+                {sportProps.filter(p => p.stats.games.length > 0).length}
               </strong>
               <small>Matching player and stat</small>
             </div>
@@ -487,9 +513,7 @@ export default function Home() {
                 70%+ LAST 10 <Target size={18} />
               </div>
               <strong>
-                {sportProps.filter(
-                  p => (analyze(p, allLogs).hit10?.pct ?? 0) >= 70
-                ).length}
+                {sportProps.filter(p => (p.stats.hit10?.pct ?? 0) >= 70).length}
               </strong>
               <small>Historical rate, not a prediction</small>
             </div>
@@ -619,7 +643,7 @@ export default function Home() {
                 </thead>
 
                 <tbody>
-                  {visible.map(({ stats, ...p }) => (
+                  {displayed.map(({ stats, ...p }) => (
                     <tr
                       key={p.id}
                       onClick={() => setSelected(p)}
@@ -724,6 +748,20 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {visible.length > PAGE_SIZE && (
+            <div className="heading-actions" style={{ justifyContent: 'center', marginTop: 16, marginBottom: 16 }}>
+              <button className="btn secondary" disabled={safePage <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+                Previous
+              </button>
+              <span className="muted smaller" style={{ alignSelf: 'center' }}>
+                Page {safePage} of {totalPages} · Showing {displayed.length} of {visible.length}
+              </span>
+              <button className="btn secondary" disabled={safePage >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+                Next
+              </button>
+            </div>
+          )}
 
           <div className="footer-tip">
             <ShieldCheck size={18} />
