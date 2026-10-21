@@ -35,12 +35,15 @@ function fmtOdds(n: number) {
 
 type LiveStatus = 'loading' | 'live' | 'unavailable';
 type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
+type SortField = 'last5' | 'last10' | 'average';
 
 const normalizeBook = (name: string) =>
   name.toLowerCase().replace(/[^a-z]/g, '');
 
 export default function Home() {
   const [sport, setSport] = useState<Sport>('NBA');
+  const [sortField, setSortField] = useState<SortField>('last10');
+  const [sortDescending, setSortDescending] = useState(true);
   const [tab, setTab] = useState<'explore' | 'saved'>('explore');
   const [props, setProps] = useState<Prop[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
@@ -280,8 +283,19 @@ export default function Home() {
       `${p.player} ${p.event} ${p.bookmaker}`.toLowerCase().includes(query.toLowerCase()) &&
       (minHit === 0 || (p.stats.hit10?.pct ?? -1) >= minHit)
     )
-    .sort((a, b) => (b.stats.hit10?.pct ?? -1) - (a.stats.hit10?.pct ?? -1)),
-    [sportProps, tab, saved, market, side, sportsbook, query, minHit]
+    .sort((a, b) => {
+      const metric = (p: typeof a) => sortField === 'last5'
+        ? p.stats.hit5?.pct
+        : sortField === 'average'
+          ? p.stats.avg
+          : p.stats.hit10?.pct;
+      const av = metric(a), bv = metric(b);
+      if (av == null && bv == null) return a.player.localeCompare(b.player);
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (sortDescending ? bv - av : av - bv) || a.player.localeCompare(b.player);
+    }),
+    [sportProps, tab, saved, market, side, sportsbook, query, minHit, sortField, sortDescending]
   );
 
   useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit]);
@@ -396,24 +410,10 @@ export default function Home() {
           Saved Props <b>{saved.length || ''}</b>
         </button>
 
-        <div className="side-label spaced">TOOLS</div>
-
-        <button className="nav" onClick={() => file.current?.click()}>
-          <FileUp size={18} /> Import Game Logs
-        </button>
-
-        <button className="nav" onClick={() => setModal(true)}>
-          <Plus size={18} /> Manual Prop
-        </button>
-
-        <button className="nav" onClick={() => setHelp(true)}>
-          <CircleHelp size={18} /> How It Works
-        </button>
-
         <div className="sidebar-bottom">
           <div className="live-dot" />
           <span>Research workspace</span>
-          <small>v2.0 · Live odds enabled</small>
+          <small>v3.4 · Research dashboard</small>
         </div>
       </aside>
 
@@ -454,13 +454,6 @@ export default function Home() {
             </div>
 
             <div className="heading-actions">
-              <button
-                className="btn secondary"
-                onClick={() => setModal(true)}
-              >
-                <Plus size={16} /> Add Prop
-              </button>
-
               <button
                 className="btn primary"
                 disabled={loading}
@@ -547,23 +540,11 @@ export default function Home() {
             </p>
           )}
 
-          <div className="notice"><CircleHelp size={17} /><span>{historyStatus}</span></div>
-
-          {notice && (
-            <div className="notice">
-              <CircleHelp size={17} />
-              <span>{notice}</span>
-              <button onClick={() => setNotice('')}>
-                <X size={16} />
-              </button>
-            </div>
-          )}
-
           <div className="section-title">
             <div>
               <h2>Explore player props</h2>
               <p>
-                Sort by historical last-10 hit rate.
+                Click Last 5, Last 10, or L10 AVG to sort player props.
                 Click a prop for a game-by-game breakdown.
               </p>
             </div>
@@ -645,9 +626,9 @@ export default function Home() {
                   <tr>
                     <th>PLAYER / MATCHUP</th>
                     <th>PROP LINE</th>
-                    <th>LAST 5</th>
-                    <th>LAST 10</th>
-                    <th>L10 AVG</th>
+                    <th><button type="button" className={"sort-header " + (sortField === "last5" ? "sort-active" : "")} onClick={() => { setSortField("last5"); setSortDescending(sortField === "last5" ? !sortDescending : true); setPage(1); }}>LAST 5 {sortField === "last5" ? (sortDescending ? "↓" : "↑") : "↕"}</button></th>
+                    <th><button type="button" className={"sort-header " + (sortField === "last10" ? "sort-active" : "")} onClick={() => { setSortField("last10"); setSortDescending(sortField === "last10" ? !sortDescending : true); setPage(1); }}>LAST 10 {sortField === "last10" ? (sortDescending ? "↓" : "↑") : "↕"}</button></th>
+                    <th><button type="button" className={"sort-header " + (sortField === "average" ? "sort-active" : "")} onClick={() => { setSortField("average"); setSortDescending(sortField === "average" ? !sortDescending : true); setPage(1); }}>L10 AVG {sortField === "average" ? (sortDescending ? "↓" : "↑") : "↕"}</button></th>
                     <th>BOOK / ODDS</th>
                     <th>DATA</th>
                     <th></th>
