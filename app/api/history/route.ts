@@ -181,25 +181,62 @@ async function loadHistory(sport: Sport): Promise<HistoryResult> {
   };
 }
 
-export async function GET(request: NextRequest) {
-  const sport: Sport = request.nextUrl.searchParams.get('sport') === 'NFL' ? 'NFL' : 'NBA';
+// The dataset is cached in the Node process, but only requested players are sent
+// to clients. This avoids 100K+ row JSON responses and browser lockups.
+const inflight: Partial<Record<Sport, Promise<HistoryResult>>> = {};
+
+async function getHistory(sport: Sport): Promise<HistoryResult> {
   const existing = cache[sport];
-  if (existing && existing.until > Date.now()) return NextResponse.json(existing.payload);
-  try {
-    const payload = await loadHistory(sport);
+  if (existing && existing.until > Date.now()) return existing.payload;
+  if (inflight[sport]) return inflight[sport]!;
+  const task = loadHistory(sport).then(payload => {
     cache[sport] = {
       payload,
       until: Date.now() + (payload.rows.length ? TTL : 10 * 60 * 1000)
     };
-    return NextResponse.json(payload);
+    return payload;
+  });
+  inflight[sport] = task;
+  try { return await task; }
+  finally { delete inflight[sport]; }
+}
+
+function filterHistory(payload: HistoryResult, players: string[]): HistoryResult {
+  const names = new Set(players.map(p => p.trim().toLowerCase()).filter(Boolean));
+  const rows = payload.rows.filter(row => names.has(row.player.trim().toLowerCase()));
+  return {
+    ...payload,
+    rows,
+    message: rows.length
+      ? `Loaded ${rows.length} player-stat observations for ${names.size} requested players. ${payload.source}.`
+      : `No matching published history for ${names.size} requested players. ${payload.message}`,
+    diagnostics: payload.diagnostics.slice(0, 6)
+  };
+}
+
+// A browser GET never dumps the entire dataset.
+export async function GET(request: NextRequest) {
+  const sport: Sport = request.nextUrl.searchParams.get('sport') === 'NFL' ? 'NFL' : 'NBA';
+  return NextResponse.json({ rows: [], source: sport, message: 'Use POST with {sport, players:[...]}; full history is never sent to the browser.' });
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body: unknown = await request.json();
+    if (!body || typeof body !== 'object') return NextResponse.json({ message: 'Invalid JSON' }, { status: 400 });
+    const input = body as { sport?: string; players?: unknown };
+    const sport: Sport = input.sport === 'NFL' ? 'NFL' : 'NBA';
+    if (!Array.isArray(input.players) || input.players.length > 120 ||
+        input.players.some(p => typeof p !== 'string' || p.length > 100)) {
+      return NextResponse.json({ message: 'Provide 1-120 valid player names' }, { status: 400 });
+    }
+    const players = [...new Set(input.players as string[])];
+    if (!players.length) return NextResponse.json({ rows: [], message: 'No players requested' });
+    const history = await getHistory(sport);
+    return NextResponse.json(filterHistory(history, players), {
+      headers: { 'Cache-Control': 'private, no-store' }
+    });
   } catch (error) {
-    return NextResponse.json({
-      rows: [],
-      source: sport,
-      season: null,
-      updatedAt: new Date().toISOString(),
-      message: error instanceof Error ? error.message : 'Unexpected history import error',
-      diagnostics: []
-    }, { status: 502 });
+    return NextResponse.json({ rows: [], message: error instanceof Error ? error.message : 'History error' }, { status: 502 });
   }
 }

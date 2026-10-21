@@ -186,37 +186,49 @@ export default function Home() {
     }
   }, [hydrated, sport, refresh]);
 
-  // Historical data remains optional: live odds stay visible on failures.
+  // Ask the server ONLY for players offered in the current sportsbook lines.
+  // The full NFL dataset stays server-side, never in the browser.
+  const historyPlayers = useMemo(() => Array.from(new Set(
+    props.filter(p => p.sport === sport &&
+      ['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker)))
+      .map(p => p.player.trim()).filter(Boolean)
+  )).sort(), [props, sport]);
+  const historyPlayerKey = historyPlayers.join('|');
+
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || historyPlayers.length === 0) return;
     const controller = new AbortController();
-    setHistoryStatus(`Loading ${sport} game history...`);
-    const timer = setTimeout(() => controller.abort(), 18000);
+    setHistoryStatus(`Loading ${sport} history for ${historyPlayers.length} players...`);
+    const timer = setTimeout(() => controller.abort(), 45000);
     async function load() {
       try {
-        const response = await fetch(`/api/history?sport=${sport}`, {
+        const response = await fetch('/api/history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sport, players: historyPlayers.slice(0, 120) }),
           cache: 'no-store', signal: controller.signal
         });
         if (!response.ok) throw new Error(`History API returned ${response.status}`);
-        // Do not parse an unexpectedly large response on the UI thread.
         const size = Number(response.headers.get('content-length') || 0);
-        if (size > MAX_HISTORY_BYTES) throw new Error('History response is too large; server-side filtering is needed.');
+        if (size > MAX_HISTORY_BYTES) throw new Error('Filtered history still exceeds the response limit.');
         const text = await response.text();
-        if (text.length > MAX_HISTORY_BYTES) throw new Error('History response is too large; server-side filtering is needed.');
+        if (text.length > MAX_HISTORY_BYTES) throw new Error('Filtered history still exceeds the response limit.');
         const data = JSON.parse(text);
-        if (!Array.isArray(data.rows)) throw new Error('Invalid historical data response');
+        if (!Array.isArray(data.rows)) throw new Error('Invalid history response');
         if (controller.signal.aborted) return;
         setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...(data.rows as LogRow[])]);
-        setHistoryStatus(data.message || `${data.rows.length} historical rows loaded.`);
+        setHistoryStatus(data.message || `Loaded ${data.rows.length} historical observations.`);
       } catch (error) {
         if (!controller.signal.aborted) setHistoryStatus(
-          error instanceof Error ? `History unavailable: ${error.message}` : 'Automatic history unavailable. You can still import a CSV.'
+          error instanceof Error ? `History unavailable: ${error.message}` : 'Automatic history unavailable. CSV import remains available.'
         );
       } finally { clearTimeout(timer); }
     }
     void load();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [hydrated, sport]);
+  // Players are sorted, so this key changes only when the available set changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, sport, historyPlayerKey]);
 
   const allLogs = useMemo(() => {
     const map = new Map<string, LogRow>();
