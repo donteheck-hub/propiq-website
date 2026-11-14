@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDownUp, BarChart3, Bookmark, CalendarDays,
   ChevronDown, CircleHelp, Download, FileUp, Filter,
-  LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck,
+  LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles,
   SlidersHorizontal, Target, TrendingUp, X
 } from 'lucide-react';
 import {
@@ -62,7 +62,7 @@ export default function Home() {
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
-  const [tab, setTab] = useState<'explore' | 'saved'>('explore');
+  const [tab, setTab] = useState<'explore' | 'saved' | 'finder'>('explore');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
@@ -78,6 +78,8 @@ export default function Home() {
   const [sportsbook, setSportsbook] = useState<SportsbookFilter>('both');
   const [side, setSide] = useState('all');
   const [minHit, setMinHit] = useState(0);
+  const [finderThreshold, setFinderThreshold] = useState(70);
+  const [finderSample, setFinderSample] = useState<10 | 20>(10);
   const [selected, setSelected] = useState<Prop | null>(null);
   const [opponentView, setOpponentView] = useState('all');
   const [defenseTeam, setDefenseTeam] = useState('');
@@ -389,7 +391,8 @@ export default function Home() {
 
   const visible = useMemo(() => sportProps
     .filter(p =>
-      (tab === 'explore' || saved.includes(p.id)) &&
+      (tab !== 'saved' || saved.includes(p.id)) &&
+      (tab !== 'finder' || (p.source === 'live' && p.stats.games.length >= finderSample && (finderSample === 20 ? p.stats.hit20?.pct : p.stats.hit10?.pct) !== null && (finderSample === 20 ? (p.stats.hit20?.pct ?? -1) : (p.stats.hit10?.pct ?? -1)) >= finderThreshold)) &&
       (market === 'all' || p.marketKey === market) &&
       (side === 'all' || p.side === side) &&
       (sportsbook === 'both'
@@ -399,7 +402,9 @@ export default function Home() {
       (minHit === 0 || (p.stats.hit10?.total ?? 0) >= MIN_SAMPLE_FOR_HIGHLIGHT && (p.stats.hit10?.pct ?? -1) >= minHit)
     )
     .sort((a, b) => {
-      const metric = (p: typeof a) => sortField === 'last5'
+      const metric = (p: typeof a) => tab === 'finder'
+        ? (finderSample === 20 ? p.stats.hit20?.pct : p.stats.hit10?.pct)
+        : sortField === 'last5'
         ? p.stats.hit5?.pct
         : sortField === 'average'
           ? p.stats.avg
@@ -410,10 +415,10 @@ export default function Home() {
       if (bv == null) return -1;
       return (sortDescending ? bv - av : av - bv) || a.player.localeCompare(b.player);
     }),
-    [sportProps, tab, saved, market, side, sportsbook, query, minHit, sortField, sortDescending]
+    [sportProps, tab, saved, market, side, sportsbook, query, minHit, sortField, sortDescending, finderThreshold, finderSample]
   );
 
-  useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit, seasonView]);
+  useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit, seasonView, finderThreshold, finderSample]);
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const displayed = useMemo(() => visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), [visible, safePage]);
@@ -558,6 +563,10 @@ export default function Home() {
           Prop Explorer
         </button>
 
+        <button className={'nav ' + (tab === 'finder' ? 'active' : '')} onClick={() => { setTab('finder'); setSortDescending(true); setMobileNavOpen(false); }}>
+          <Sparkles size={18} /> Smart Finder
+        </button>
+
         <button
           className={'nav ' + (tab === 'saved' ? 'active' : '')}
           onClick={() => { setTab('saved'); setMobileNavOpen(false); }}
@@ -579,7 +588,7 @@ export default function Home() {
             <button className="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={21} /></button>
           <div className="crumb">
             Workspace <span>/</span>{' '}
-            {tab === 'explore' ? 'Prop Explorer' : 'Saved Props'}
+            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : 'Saved Props'}
           </div>
           </div>
 
@@ -603,7 +612,7 @@ export default function Home() {
               </div>
 
               <h1>
-                {tab === 'explore' ? 'Prop Explorer' : 'Your Watchlist'}
+                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : 'Your Watchlist'}
               </h1>
 
               <p>
@@ -710,10 +719,9 @@ export default function Home() {
           <div className="section-title premium-section-title">
             <div>
               <div className="eyebrow">RESEARCH DESK</div>
-              <h2>{tab === 'saved' ? 'Saved player props' : 'Explore player props'}</h2>
+              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : 'Explore player props'}</h2>
               <p>
-                Click Last 5, Last 10, or L10 AVG to sort player props.
-                Click a prop for a game-by-game breakdown.
+                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
               </p>
             </div>
 
@@ -722,6 +730,33 @@ export default function Home() {
             </span>
           </div>
 
+          {tab === 'finder' && (
+            <section className="finder-panel" aria-label="Smart Finder research controls">
+              <div className="finder-intro">
+                <span className="finder-icon"><Sparkles size={20}/></span>
+                <div><strong>Smart Finder · Historical trends</strong><p>Only live sportsbook props with a complete game sample qualify. Results follow your selected season, sportsbook, and other filters.</p></div>
+              </div>
+              <div className="finder-controls">
+                <label>Historical sample
+                  <select value={finderSample} onChange={e => setFinderSample(Number(e.target.value) as 10 | 20)}>
+                    <option value={10}>Last 10 games</option>
+                    <option value={20}>Last 20 games</option>
+                  </select>
+                </label>
+                <label>Minimum observed hit rate
+                  <select value={finderThreshold} onChange={e => setFinderThreshold(Number(e.target.value))}>
+                    <option value={50}>50% or higher</option>
+                    <option value={60}>60% or higher</option>
+                    <option value={70}>70% or higher</option>
+                    <option value={80}>80% or higher</option>
+                    <option value={90}>90% or higher</option>
+                  </select>
+                </label>
+                <div className="finder-count"><strong>{visible.length}</strong><span>matching live props</span></div>
+              </div>
+              <p className="finder-disclaimer"><ShieldCheck size={14}/> A historical hit rate does not estimate the chance of a future result. No projections or expected-value claims are made.</p>
+            </section>
+          )}
           <div className="research-toolbar">
             <span><SlidersHorizontal size={15} /> Research filters</span>
             <button type="button" className="reset-filters" onClick={() => { setQuery(''); setMarket('all'); setSide('all'); setMinHit(0); setSportsbook('both'); setSeasonView('current'); }}>Reset filters</button>
@@ -945,12 +980,12 @@ export default function Home() {
               <div className="empty">
                 <Search size={28} />
                 <h3>
-                  {loading ? 'Loading player props...' : 'No props found'}
+                  {loading ? 'Loading player props...' : tab === 'finder' ? 'No qualifying trends' : 'No props found'}
                 </h3>
                 <p>
                   {loading
                     ? 'Checking available sportsbook lines.'
-                    : 'Try another filter, add a manual prop, or refresh the live odds.'}
+                    : tab === 'finder' ? 'Try a lower hit-rate threshold, a different season, or Last 10. Missing history is not a missed bet.' : 'Try another filter, add a manual prop, or refresh the live odds.'}
                 </p>
               </div>
             )}
