@@ -6,13 +6,17 @@ import {
   Activity, ArrowDownUp, BarChart3, Bookmark, CalendarDays,
   ChevronDown, CircleHelp, Download, FileUp, Filter,
   LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles, ArrowLeftRight,
-  SlidersHorizontal, Target, TrendingUp, X, Shield
+  SlidersHorizontal, Target, TrendingUp, X, Shield, History
 } from 'lucide-react';
 import {
   analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, recentTrends, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
 } from '../lib/props';
 
 const STORAGE_KEY = 'prop-iq-v2';
+const ODDS_HISTORY_KEY = 'prop-iq-odds-history-v1';
+type OddsSample = { sport: Sport; player: string; event: string; commence: string; market: string; marketKey: string; side: 'Over'|'Under'; bookmaker: string; line: number; odds: number; observedAt: string };
+const sampleKey = (p: Pick<OddsSample, 'sport'|'player'|'event'|'commence'|'marketKey'|'side'|'bookmaker'>) => [p.sport, normalize(p.player), normalize(p.event), p.commence, p.marketKey, p.side, normalize(p.bookmaker)].join('|');
+
 const PAGE_SIZE = 40;
 const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
 const MAX_CSV_BYTES = 5 * 1024 * 1024;
@@ -65,9 +69,10 @@ export default function Home() {
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
-  const [tab, setTab] = useState<'explore' | 'saved' | 'finder' | 'odds' | 'matchups'>('explore');
+  const [tab, setTab] = useState<'explore' | 'saved' | 'finder' | 'odds' | 'matchups' | 'movement'>('explore');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
+  const [oddsSamples, setOddsSamples] = useState<OddsSample[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [autoLogs, setAutoLogs] = useState<LogRow[]>([]);
   const [historyStatus, setHistoryStatus] = useState('Loading historical game data...');
@@ -126,6 +131,14 @@ export default function Home() {
       console.error('Unable to restore saved research:', error);
     }
 
+    try {
+      const savedHistory = JSON.parse(localStorage.getItem(ODDS_HISTORY_KEY) || '[]');
+      if (Array.isArray(savedHistory)) setOddsSamples(savedHistory.filter((row: OddsSample) =>
+        row && (row.sport === 'NBA' || row.sport === 'NFL') &&
+        Number.isFinite(row.line) && Number.isFinite(row.odds) &&
+        typeof row.observedAt === 'string' && !Number.isNaN(Date.parse(row.observedAt))
+      ).slice(-12000));
+    } catch (error) { console.warn('Could not restore odds history', error); }
     setHydrated(true);
   }, []);
 
@@ -148,6 +161,12 @@ export default function Home() {
       console.error('Unable to save research:', error);
     }
   }, [hydrated, props, logs, saved, defenseRows]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try { localStorage.setItem(ODDS_HISTORY_KEY, JSON.stringify(oddsSamples)); }
+    catch (error) { console.warn('Could not save odds history', error); }
+  }, [hydrated, oddsSamples]);
 
   const refresh = useCallback(async (selectedSport: Sport) => {
     const currentRequest = ++requestId.current;
@@ -191,6 +210,26 @@ export default function Home() {
         ),
         ...liveProps
       ]);
+
+      // Capture real provider snapshots only. Reopening cached data with the
+      // same provider timestamp does not create fictitious movement.
+      if (!data.stale && data.updatedAt && !Number.isNaN(Date.parse(data.updatedAt))) {
+        const observedAt: string = new Date(data.updatedAt).toISOString();
+        const newSamples: OddsSample[] = liveProps.filter(p => p.source === 'live' &&
+          Number.isFinite(p.line) && Number.isFinite(p.odds)).slice(0, 1200).map(p => ({
+          sport: p.sport, player: p.player, event: p.event, commence: p.commence,
+          market: p.market, marketKey: p.marketKey, side: p.side,
+          bookmaker: p.bookmaker, line: p.line, odds: p.odds, observedAt
+        }));
+        setOddsSamples(previous => {
+          const oldest = Date.now() - 30 * 86400000;
+          const unique = new Map<string, OddsSample>();
+          for (const row of [...previous, ...newSamples]) {
+            if (Date.parse(row.observedAt) >= oldest) unique.set(`${sampleKey(row)}|${row.observedAt}`, row);
+          }
+          return [...unique.values()].sort((a, b) => a.observedAt.localeCompare(b.observedAt)).slice(-12000);
+        });
+      }
 
       setStatus(data.stale ? 'stale' : data.cached ? 'cached' : 'live');
       setOddsCoverage(typeof data.availableEvents === 'number' ? `Odds coverage: ${data.eventsChecked} of ${data.availableEvents} upcoming games checked. ${Array.isArray(data.warnings) && data.warnings.length ? `${data.warnings.length} provider error(s).` : ''}` : '');
@@ -588,6 +627,26 @@ export default function Home() {
   }
 
 
+  const movementRows = useMemo(() => {
+    const byOffer = new Map<string, OddsSample[]>();
+    for (const sample of oddsSamples) {
+      if (sample.sport !== sport) continue;
+      if (market !== 'all' && sample.marketKey !== market) continue;
+      if (side !== 'all' && sample.side !== side) continue;
+      if (sportsbook === 'both' ? !['draftkings', 'fanduel'].includes(normalizeBook(sample.bookmaker)) : normalizeBook(sample.bookmaker) !== sportsbook) continue;
+      if (!`${sample.player} ${sample.event} ${sample.bookmaker}`.toLowerCase().includes(query.toLowerCase())) continue;
+      const key = sampleKey(sample);
+      const current = byOffer.get(key) || [];
+      current.push(sample); byOffer.set(key, current);
+    }
+    return [...byOffer.values()].map(samples => {
+      const ordered = [...samples].sort((a,b) => a.observedAt.localeCompare(b.observedAt));
+      const first = ordered[0], last = ordered[ordered.length - 1];
+      return { first, last, count: ordered.length, lineDelta: last.line - first.line,
+        oddsDelta: last.odds - first.odds, samples: ordered };
+    }).sort((a,b) => b.last.observedAt.localeCompare(a.last.observedAt)).slice(0, 250);
+  }, [oddsSamples, sport, market, side, sportsbook, query]);
+
   return (
     <div className="shell">
       {mobileNavOpen && (
@@ -623,6 +682,10 @@ export default function Home() {
           <Shield size={18} /> Matchup Center
         </button>
 
+        <button className={'nav ' + (tab === 'movement' ? 'active' : '')} onClick={() => { setTab('movement'); setMobileNavOpen(false); }}>
+          <History size={18} /> Line History
+        </button>
+
         <button className={'nav ' + (tab === 'odds' ? 'active' : '')} onClick={() => { setTab('odds'); setMobileNavOpen(false); }}>
           <ArrowLeftRight size={18} /> Odds Comparison
         </button>
@@ -648,7 +711,7 @@ export default function Home() {
             <button className="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={21} /></button>
           <div className="crumb">
             Workspace <span>/</span>{' '}
-            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'matchups' ? 'Matchup Center' : 'Saved Props'}
+            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'movement' ? 'Line History' : tab === 'matchups' ? 'Matchup Center' : 'Saved Props'}
           </div>
           </div>
 
@@ -673,7 +736,7 @@ export default function Home() {
               </div>
 
               <h1>
-                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'matchups' ? 'Matchup Center' : 'Your Watchlist'}
+                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'movement' ? 'Line History' : tab === 'matchups' ? 'Matchup Center' : 'Your Watchlist'}
               </h1>
 
               <p>
@@ -780,14 +843,14 @@ export default function Home() {
           <div className="section-title premium-section-title">
             <div>
               <div className="eyebrow">RESEARCH DESK</div>
-              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : tab === 'odds' ? 'Compare sportsbook prices' : tab === 'matchups' ? 'Opponent matchup research' : 'Explore player props'}</h2>
+              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : tab === 'odds' ? 'Compare sportsbook prices' : tab === 'movement' ? 'Line movement & odds history' : tab === 'matchups' ? 'Opponent matchup research' : 'Explore player props'}</h2>
               <p>
-                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : tab === 'odds' ? 'Compare the exact same live player prop across DraftKings and FanDuel. Better prices increase potential payout, not the chance of winning.' : tab === 'matchups' ? 'Compare recorded player results against an opponent. Select a team using historical game logs; no projected matchup is assumed.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
+                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : tab === 'odds' ? 'Compare the exact same live player prop across DraftKings and FanDuel. Better prices increase potential payout, not the chance of winning.' : tab === 'movement' ? 'Track actual changes between recorded sportsbook snapshots. Daily refresh means movements between snapshots are not captured.' : tab === 'matchups' ? 'Compare recorded player results against an opponent. Select a team using historical game logs; no projected matchup is assumed.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
               </p>
             </div>
 
             <span className="results">
-              {tab === 'odds' ? oddsComparisons.length : tab === 'matchups' ? matchupCards.length : visible.length} results
+              {tab === 'odds' ? oddsComparisons.length : tab === 'movement' ? movementRows.length : tab === 'matchups' ? matchupCards.length : visible.length} results
             </span>
           </div>
 
@@ -910,7 +973,31 @@ export default function Home() {
               </div>
             </div>
           )}
-          {tab === 'matchups' ? (
+          {tab === 'movement' ? (
+            <section className="line-history-section" aria-label="Recorded sportsbook line movement">
+              <div className="line-history-intro">
+                <History size={19}/>
+                <div><strong>Recorded odds snapshots</strong>
+                <p>Saved only when this browser receives a new provider data timestamp. Showing up to 30 days of available observations (maximum 12,000 stored records). No earlier changes can be reconstructed.</p></div>
+              </div>
+              {movementRows.length ? (
+                <div className="line-history-table-wrap"><table className="line-history-table"><thead><tr><th>PLAYER / MATCHUP</th><th>MARKET</th><th>FIRST RECORDED</th><th>LATEST RECORDED</th><th>LINE CHANGE</th><th>ODDS CHANGE</th><th>SAMPLES</th></tr></thead><tbody>
+                  {movementRows.map(({first,last,lineDelta,oddsDelta,count}) => (
+                    <tr key={sampleKey(last)}>
+                      <td><strong>{last.player}</strong><small>{last.event} · {last.bookmaker}</small></td>
+                      <td>{last.side} {last.market}</td>
+                      <td>{first.line} ({fmtOdds(first.odds)})<small>{new Date(first.observedAt).toLocaleString()}</small></td>
+                      <td>{last.line} ({fmtOdds(last.odds)})<small>{new Date(last.observedAt).toLocaleString()}</small></td>
+                      <td className={lineDelta === 0 ? 'movement-flat' : 'movement-change'}>{lineDelta > 0 ? '+' : ''}{lineDelta.toFixed(1)}</td>
+                      <td className={oddsDelta === 0 ? 'movement-flat' : 'movement-change'}>{oddsDelta > 0 ? '+' : ''}{oddsDelta}</td>
+                      <td>{count}{count === 1 ? <small>Baseline only</small> : null}</td>
+                    </tr>
+                  ))}
+                </tbody></table></div>
+              ) : <div className="empty"><History size={28}/><h3>No line history recorded yet</h3><p>The first successful odds load creates a baseline. A later, newly timestamped snapshot is needed to show actual movement.</p></div>}
+              <p className="finder-disclaimer"><ShieldCheck size={14}/> Browser-only history: not shared across devices or users, and clearing browser data deletes it. This is not a real-time line movement feed.</p>
+            </section>
+          ) : tab === 'matchups' ? (
             <section className="matchup-center" aria-label="Player matchup research">
               <div className="matchup-center-controls">
                 <div>
@@ -1125,7 +1212,7 @@ export default function Home() {
           </div>
 
           </>)}
-          {tab !== 'odds' && tab !== 'matchups' && comparison.length > 0 && (
+          {tab !== 'odds' && tab !== 'matchups' && tab !== 'movement' && comparison.length > 0 && (
             <section className="comparison-panel" aria-label="Selected prop comparison">
               <div className="comparison-head">
                 <div><h2>Compare player props ({comparison.length}/2)</h2>

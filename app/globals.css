@@ -209,3 +209,6 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 .matchup-center-card>p{font-size:11px;line-height:1.6;color:#baa5b3;margin:0}
 .matchup-center-card .odds-view-research{margin-top:auto}
 @media(max-width:700px){.matchup-center-controls{flex-direction:column;align-items:stretch;padding:15px}.matchup-center-controls label{min-width:0}.matchup-center-controls select{max-width:none;width:100%}}
+
+/* Phase 2 — recorded line movement */
+.line-history-section{margin-top:12px}.line-history-intro{display:flex;gap:12px;align-items:flex-start;padding:19px;background:#1d1520;border:1px solid #45303d;border-radius:12px;margin-bottom:16px;color:#ff8ba0}.line-history-intro strong{color:#fff;font-size:14px}.line-history-intro p{font-size:12px;line-height:1.6;color:#baaab7;margin:5px 0 0}.line-history-table-wrap{overflow-x:auto;border:1px solid #402d37;border-radius:12px;background:#15121a}.line-history-table{min-width:980px;width:100%}.line-history-table td{padding:15px 12px}.line-history-table td strong{display:block;color:#fff}.line-history-table td small{display:block;color:#94849b;margin-top:6px;font-size:10px}.movement-flat{color:#a0a0ad}.movement-change{color:#ff8097;font-weight:750}
