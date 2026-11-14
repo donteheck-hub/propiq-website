@@ -1130,7 +1130,7 @@ export default function Home() {
             <div className="drawer-sub">
               <strong>{opponentView === 'all' ? 'Last 10 games' : `Last 10 vs ${opponentView}`} · {seasonView === 'all' ? 'all seasons' : seasonLabel(selected.sport, seasonFor(selected.sport)! )}</strong>
               <small>
-                Line: {selected.line} · green = hit · orange = miss
+                Line: {selected.line} · green = hit · red = miss
                 · gray = push
               </small>
             </div>
@@ -1197,7 +1197,7 @@ export default function Home() {
                         </span>
                         <b>{g.value}</b>
                         <Pill kind={
-                          push ? 'neutral' : hit ? 'green' : 'amber'
+                          push ? 'neutral' : hit ? 'green' : 'red'
                         }>
                           {push ? 'PUSH' : hit ? 'HIT' : 'MISS'}
                         </Pill>
