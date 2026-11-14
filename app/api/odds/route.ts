@@ -14,9 +14,24 @@ function eventLimit(): number {
   return Number.isInteger(value) ? Math.max(1, Math.min(12, value)) : 4;
 }
 
+class ProviderError extends Error {
+  constructor(readonly httpStatus: number, message: string) {
+    super(message);
+    this.name = 'ProviderError';
+  }
+}
+
 async function fetchJSON(url: string) {
   const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(20000) });
-  if (!response.ok) throw Error(`Provider HTTP ${response.status}`);
+  if (!response.ok) {
+    // Never echo a provider response or URL: both can contain sensitive request details.
+    const messages: Record<number, string> = {
+      401: 'The Odds API rejected ODDS_API_KEY (HTTP 401). Check the key in Railway → Service → Variables, then redeploy. Also check whether the key has been revoked or rotated.',
+      403: 'The Odds API denied access (HTTP 403). Check whether your subscription includes this endpoint and player-prop markets.',
+      429: 'The Odds API request limit or quota was reached (HTTP 429). Review your usage dashboard before retrying.',
+    };
+    throw new ProviderError(response.status, messages[response.status] ?? `The Odds API request failed (HTTP ${response.status}).`);
+  }
   return response.json();
 }
 
@@ -46,7 +61,10 @@ async function load(sport: Sport, key: string): Promise<Payload> {
           const available = new Set((marketData.bookmakers ?? []).flatMap(book =>
             Array.isArray(book.markets) ? book.markets.map(market => market.key) : []));
           if (available.size > 0) supported = markets.filter(market => available.has(market));
-        } catch { /* Market discovery is optional; try configured markets. */ }
+        } catch (error) {
+          if (error instanceof ProviderError && [401, 403, 429].includes(error.httpStatus)) throw error;
+          // Market discovery can be unavailable even when event odds are working.
+        }
       }
       if (supported.length === 0) { checked++; empty++; continue; }
       const makeUrl = (keys: string[]) => `${eventBase}/odds?apiKey=${encodeURIComponent(key)}&bookmakers=draftkings,fanduel&markets=${keys.join(',')}&oddsFormat=american`;
@@ -81,6 +99,8 @@ async function load(sport: Sport, key: string): Promise<Payload> {
       checked++;
       if (props.length === priorCount) empty++;
     } catch (error) {
+      // Authentication and quota errors affect all games; surface them immediately.
+      if (error instanceof ProviderError && [401, 403, 429].includes(error.httpStatus)) throw error;
       // One unsupported event should not hide successful lines from other games.
       warnings.push(`${event.away_team} @ ${event.home_team}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -93,7 +113,7 @@ async function load(sport: Sport, key: string): Promise<Payload> {
 
 export async function GET(req: NextRequest) {
   const sport: Sport = req.nextUrl.searchParams.get('sport') === 'NFL' ? 'NFL' : 'NBA';
-  const key = process.env.ODDS_API_KEY;
+  const key = process.env.ODDS_API_KEY?.trim();
   if (!key) return NextResponse.json({ props: [], configured: false, message: 'Set ODDS_API_KEY in your local or Railway server environment.' });
   const cached = cache[sport];
   if (cached && cached.until > Date.now()) return NextResponse.json(cached.payload, { headers: { 'Cache-Control': 'private, no-store' } });
@@ -103,7 +123,8 @@ export async function GET(req: NextRequest) {
     cache[sport] = { payload, until: Date.now() + CACHE_MS };
     return NextResponse.json(payload, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
-    return NextResponse.json({ props: [], configured: true, message: error instanceof Error ? error.message : 'Unknown provider error' }, { status: 502 });
+    const status = error instanceof ProviderError ? error.httpStatus : 502;
+    return NextResponse.json({ props: [], configured: true, message: error instanceof Error ? error.message : 'Unknown provider error' }, { status });
   } finally {
     delete inflight[sport];
   }
