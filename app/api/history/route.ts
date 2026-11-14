@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { LogRow, Sport } from '../../../lib/props';
+import { normalize, type LogRow, type Sport } from '../../../lib/props';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -157,11 +157,11 @@ async function loadHistory(sport: Sport): Promise<HistoryResult> {
 
   const unique = new Map<string, LogRow>();
   for (const row of output) {
-    unique.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
+    unique.set(`${row.sport}|${normalize(row.player)}|${row.marketKey}|${row.date}`, row);
   }
   const latest = new Map<string, LogRow[]>();
   for (const row of [...unique.values()].sort((a, b) => b.date.localeCompare(a.date))) {
-    const key = `${row.sport}|${row.player.toLowerCase()}|${row.marketKey}`;
+    const key = `${row.sport}|${normalize(row.player)}|${row.marketKey}`;
     const arr = latest.get(key) || [];
     if (arr.length < 20) {
       arr.push(row);
@@ -202,8 +202,8 @@ async function getHistory(sport: Sport): Promise<HistoryResult> {
 }
 
 function filterHistory(payload: HistoryResult, players: string[]): HistoryResult {
-  const names = new Set(players.map(p => p.trim().toLowerCase()).filter(Boolean));
-  const rows = payload.rows.filter(row => names.has(row.player.trim().toLowerCase()));
+  const names = new Set(players.map(p => normalize(p.trim())).filter(Boolean));
+  const rows = payload.rows.filter(row => names.has(normalize(row.player.trim())));
   return {
     ...payload,
     rows,

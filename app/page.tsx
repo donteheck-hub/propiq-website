@@ -9,12 +9,13 @@ import {
   SlidersHorizontal, Target, TrendingUp, X
 } from 'lucide-react';
 import {
-  analyze, implied, LogRow, MARKETS, parseCsv, Prop, Sport
+  analyze, implied, LogRow, MARKETS, normalize, parseCsv, Prop, Sport
 } from '../lib/props';
 
 const STORAGE_KEY = 'prop-iq-v2';
 const PAGE_SIZE = 40;
 const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
+const MIN_SAMPLE_FOR_HIGHLIGHT = 10;
 
 function Pill({
   children,
@@ -64,6 +65,7 @@ export default function Home() {
   const [importError, setImportError] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [oddsCoverage, setOddsCoverage] = useState('');
   const [page, setPage] = useState(1);
 
   const file = useRef<HTMLInputElement>(null);
@@ -157,6 +159,7 @@ export default function Home() {
       ]);
 
       setStatus('live');
+      setOddsCoverage(typeof data.availableEvents === 'number' ? `Odds coverage: ${data.eventsChecked} of ${data.availableEvents} upcoming games checked. ${Array.isArray(data.warnings) && data.warnings.length ? `${data.warnings.length} provider error(s).` : ''}` : '');
       setLastUpdated(new Date().toLocaleTimeString());
 
       setNotice(
@@ -169,6 +172,7 @@ export default function Home() {
       if (currentRequest !== requestId.current) return;
 
       setStatus('unavailable');
+      setOddsCoverage('');
       setNotice(
         error instanceof Error
           ? error.message
@@ -236,10 +240,10 @@ export default function Home() {
   const allLogs = useMemo(() => {
     const map = new Map<string, LogRow>();
     for (const row of autoLogs) {
-      map.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
+      map.set(`${row.sport}|${normalize(row.player)}|${row.marketKey}|${row.date}`, row);
     }
     for (const row of logs) {
-      map.set(`${row.sport}|${row.player.toLowerCase()}|${row.marketKey}|${row.date}`, row);
+      map.set(`${row.sport}|${normalize(row.player)}|${row.marketKey}|${row.date}`, row);
     }
     return [...map.values()];
   }, [logs, autoLogs]);
@@ -248,7 +252,7 @@ export default function Home() {
   const logIndex = useMemo(() => {
     const index = new Map<string, LogRow[]>();
     for (const row of allLogs) {
-      const key = `${row.sport}|${row.player.trim().toLowerCase()}|${row.marketKey}`;
+      const key = `${row.sport}|${normalize(row.player)}|${row.marketKey}`;
       const current = index.get(key);
       if (current) current.push(row);
       else index.set(key, [row]);
@@ -259,10 +263,10 @@ export default function Home() {
   const analyzed = useMemo(() => {
     const memo = new Map<string, ReturnType<typeof analyze>>();
     return props.map(p => {
-      const key = `${p.sport}|${p.player.trim().toLowerCase()}|${p.marketKey}|${p.side}|${p.line}`;
+      const key = `${p.sport}|${normalize(p.player)}|${p.marketKey}|${p.side}|${p.line}`;
       let stats = memo.get(key);
       if (!stats) {
-        const matching = logIndex.get(`${p.sport}|${p.player.trim().toLowerCase()}|${p.marketKey}`) || [];
+        const matching = logIndex.get(`${p.sport}|${normalize(p.player)}|${p.marketKey}`) || [];
         stats = analyze(p, matching);
         memo.set(key, stats);
       }
@@ -281,7 +285,7 @@ export default function Home() {
         ? ['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))
         : normalizeBook(p.bookmaker) === sportsbook) &&
       `${p.player} ${p.event} ${p.bookmaker}`.toLowerCase().includes(query.toLowerCase()) &&
-      (minHit === 0 || (p.stats.hit10?.pct ?? -1) >= minHit)
+      (minHit === 0 || (p.stats.hit10?.total ?? 0) >= MIN_SAMPLE_FOR_HIGHLIGHT && (p.stats.hit10?.pct ?? -1) >= minHit)
     )
     .sort((a, b) => {
       const metric = (p: typeof a) => sortField === 'last5'
@@ -303,7 +307,7 @@ export default function Home() {
   const safePage = Math.min(page, totalPages);
   const displayed = useMemo(() => visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), [visible, safePage]);
   const selectedStats = useMemo(() => selected ? analyze(selected,
-    logIndex.get(`${selected.sport}|${selected.player.trim().toLowerCase()}|${selected.marketKey}`) || []
+    logIndex.get(`${selected.sport}|${normalize(selected.player)}|${selected.marketKey}`) || []
   ) : null, [selected, logIndex]);
 
   function importFile(f: File) {
@@ -518,9 +522,9 @@ export default function Home() {
                 70%+ LAST 10 <Target size={18} />
               </div>
               <strong>
-                {sportProps.filter(p => (p.stats.hit10?.pct ?? 0) >= 70).length}
+                {sportProps.filter(p => (p.stats.hit10?.total ?? 0) >= MIN_SAMPLE_FOR_HIGHLIGHT && (p.stats.hit10?.pct ?? 0) >= 70).length}
               </strong>
-              <small>Historical rate, not a prediction</small>
+              <small>10 games required · historical only</small>
             </div>
 
             <div className="stat">
@@ -539,6 +543,11 @@ export default function Home() {
               Last successful odds check: {lastUpdated}
             </p>
           )}
+
+          <div className="coverage-note" role="status">
+            <ShieldCheck size={16} />
+            <span>{oddsCoverage || 'Live odds coverage details appear after refresh.'} {historyStatus} Hit rates use available games; incomplete samples are labeled.</span>
+          </div>
 
           <div className="section-title">
             <div>
@@ -661,7 +670,7 @@ export default function Home() {
                         <Rate rate={stats.hit5?.pct} />
                         <small className="muted">
                           {stats.hit5
-                            ? `${stats.hit5.hits}/${stats.hit5.total}`
+                            ? `${stats.hit5.hits}/${stats.hit5.total}${stats.hit5.complete ? '' : ' · partial'}`
                             : 'No history'}
                         </small>
                       </td>
@@ -670,7 +679,7 @@ export default function Home() {
                         <Rate rate={stats.hit10?.pct} />
                         <small className="muted">
                           {stats.hit10
-                            ? `${stats.hit10.hits}/${stats.hit10.total}`
+                            ? `${stats.hit10.hits}/${stats.hit10.total}${stats.hit10.complete ? '' : ' · partial'}`
                             : 'No history'}
                         </small>
                       </td>
@@ -762,7 +771,7 @@ export default function Home() {
               <strong>Research, not guarantees.</strong>
               {' '}Historical hit rates are observations, not
               calibrated probabilities. Sportsbook odds can change.
-              Missing game logs do not mean a 0% chance of hitting.
+              Missing game logs do not mean a 0% chance of hitting. Partial samples and pushes can affect rates.
             </span>
           </div>
         </div>
@@ -823,7 +832,7 @@ export default function Home() {
                 <b>{pct(selectedStats.hit5?.pct)}</b>
                 <span>
                   {selectedStats.hit5
-                    ? `${selectedStats.hit5.hits} of ${selectedStats.hit5.total}`
+                    ? `${selectedStats.hit5.hits} of ${selectedStats.hit5.total}${selectedStats.hit5.complete ? '' : ' · partial'}`
                     : 'No history'}
                 </span>
               </div>
@@ -833,7 +842,7 @@ export default function Home() {
                 <b>{pct(selectedStats.hit10?.pct)}</b>
                 <span>
                   {selectedStats.hit10
-                    ? `${selectedStats.hit10.hits} of ${selectedStats.hit10.total}`
+                    ? `${selectedStats.hit10.hits} of ${selectedStats.hit10.total}${selectedStats.hit10.complete ? '' : ' · partial'}`
                     : 'No history'}
                 </span>
               </div>
@@ -843,7 +852,7 @@ export default function Home() {
                 <b>{pct(selectedStats.hit20?.pct)}</b>
                 <span>
                   {selectedStats.hit20
-                    ? `${selectedStats.hit20.hits} of ${selectedStats.hit20.total}`
+                    ? `${selectedStats.hit20.hits} of ${selectedStats.hit20.total}${selectedStats.hit20.complete ? '' : ' · partial'}`
                     : 'No history'}
                 </span>
               </div>
