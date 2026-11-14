@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { normalize, type LogRow, type Sport } from '../../../lib/props';
+import { logSeason, normalize, type LogRow, type Sport } from '../../../lib/props';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -161,9 +161,14 @@ async function loadHistory(sport: Sport): Promise<HistoryResult> {
   }
   const latest = new Map<string, LogRow[]>();
   for (const row of [...unique.values()].sort((a, b) => b.date.localeCompare(a.date))) {
-    const key = `${row.sport}|${normalize(row.player)}|${row.marketKey}`;
+    // Keep enough observations for season analytics, separately by season.
+    // Do not let last year's games silently replace the current season.
+    const season = logSeason(row);
+    if (season === null) continue;
+    const key = `${row.sport}|${normalize(row.player)}|${row.marketKey}|${season}`;
     const arr = latest.get(key) || [];
-    if (arr.length < 20) {
+    const maxGames = sport === 'NBA' ? 90 : 22;
+    if (arr.length < maxGames) {
       arr.push(row);
       latest.set(key, arr);
     }

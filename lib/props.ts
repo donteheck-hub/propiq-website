@@ -6,9 +6,26 @@ export const MARKETS: Record<Sport, Record<string, string>> = {
   NFL: { player_pass_yds: 'Passing Yards', player_rush_yds: 'Rushing Yards', player_reception_yds: 'Receiving Yards', player_receptions: 'Receptions', player_pass_tds: 'Passing TDs', player_rush_attempts: 'Rushing Attempts', player_pass_completions: 'Completions' }
 };
 export const normalize = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+// NBA seasons begin in October; NFL weekly observations carry their season year.
+// An imported NBA date before October belongs to the season starting the previous year.
+export function logSeason(row: Pick<LogRow, 'sport' | 'date'>): number | null {
+  const match = /^(\d{4})(?:-(\d{2})-(\d{2})|-W\d{2})$/.exec(row.date);
+  if (!match) return null;
+  const year = Number(match[1]);
+  if (row.sport === 'NFL') return year;
+  const month = Number(match[2]);
+  return month >= 1 && month <= 12 ? (month >= 10 ? year : year - 1) : null;
+}
+export function currentSeason(sport: Sport, today = new Date()): number {
+  const year = today.getUTCFullYear();
+  return sport === 'NBA' && today.getUTCMonth() < 9 ? year - 1 : year;
+}
+export function seasonLabel(sport: Sport, year: number): string {
+  return sport === 'NBA' ? `${year}-${String((year + 1) % 100).padStart(2, '0')}` : String(year);
+}
 export type HitRate = { hits: number; total: number; pushes: number; pct: number; complete: boolean };
-export function analyze(prop: Prop, logs: LogRow[]) {
-  const games = logs.filter(x => x.sport === prop.sport && normalize(x.player) === normalize(prop.player) && x.marketKey === prop.marketKey && Number.isFinite(x.value)).sort((a, b) => b.date.localeCompare(a.date));
+export function analyze(prop: Prop, logs: LogRow[], season?: number) {
+  const games = logs.filter(x => x.sport === prop.sport && normalize(x.player) === normalize(prop.player) && x.marketKey === prop.marketKey && Number.isFinite(x.value) && (season === undefined || logSeason(x) === season)).sort((a, b) => b.date.localeCompare(a.date));
   const hit = (n: number): HitRate | null => {
     const batch = games.slice(0, n);
     if (!batch.length) return null;
@@ -20,7 +37,7 @@ export function analyze(prop: Prop, logs: LogRow[]) {
   const recent = games.slice(0, 10);
   const avg = recent.length ? recent.reduce((s, r) => s + r.value, 0) / recent.length : null;
   // Past hit frequency is NOT a validated future probability.
-  return { games, avg, hit5: hit(5), hit10: hit(10), hit20: hit(20), season: hit(1000) };
+  return { games, avg, hit5: hit(5), hit10: hit(10), hit20: hit(20), season: hit(games.length || 1) };
 }
 export function implied(odds: number) { return odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100); }
 export function parseCsv(content: string): LogRow[] {

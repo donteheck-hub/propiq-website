@@ -10,3 +10,6 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 
 /* Phase 1: visible data-source and sample coverage */
 .coverage-note{display:flex;align-items:flex-start;gap:10px;border:1px solid #563341;background:#21151e;color:#d7b5c2;padding:12px 15px;border-radius:9px;margin-top:16px;font-size:12px;line-height:1.5}.coverage-note svg{flex-shrink:0;color:#ff647b;margin-top:1px}
+
+/* Phase 1.2: historical season controls */
+.season-summary{display:flex;flex-direction:column;gap:7px;margin-top:16px;padding:14px 16px;border:1px solid #55303e;background:#211720;border-radius:10px;font-size:12px;color:#d2bcc5}.season-summary strong{color:#ff8495;font-size:13px}.season-coverage{font-size:12px;color:#bba8b1;margin:0 0 12px}.season-coverage strong{color:#ffd0d9}

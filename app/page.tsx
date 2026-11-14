@@ -43,6 +43,7 @@ const normalizeBook = (name: string) =>
 
 export default function Home() {
   const [sport, setSport] = useState<Sport>('NBA');
+  const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
   const [tab, setTab] = useState<'explore' | 'saved'>('explore');
@@ -260,20 +261,26 @@ export default function Home() {
     return index;
   }, [allLogs]);
 
+  const seasonFor = useCallback((value: Sport) =>
+    seasonView === 'all' ? undefined : currentSeason(value) - (seasonView === 'previous' ? 1 : 0),
+  [seasonView]);
   const analyzed = useMemo(() => {
     const memo = new Map<string, ReturnType<typeof analyze>>();
     return props.map(p => {
-      const key = `${p.sport}|${normalize(p.player)}|${p.marketKey}|${p.side}|${p.line}`;
+      const key = `${p.sport}|${normalize(p.player)}|${p.marketKey}|${p.side}|${p.line}|${seasonView}`;
       let stats = memo.get(key);
       if (!stats) {
         const matching = logIndex.get(`${p.sport}|${normalize(p.player)}|${p.marketKey}`) || [];
-        stats = analyze(p, matching);
+        stats = analyze(p, matching, seasonFor(p.sport));
         memo.set(key, stats);
       }
       return { ...p, stats };
     });
-  }, [props, logIndex]);
+  }, [props, logIndex, seasonView, seasonFor]);
 
+  const seasonAvailable = useMemo(() => allLogs.filter(r => r.sport === sport &&
+    (seasonView === 'all' || logSeason(r) === seasonFor(sport))).length,
+  [allLogs, sport, seasonView, seasonFor]);
   const sportProps = useMemo(() => analyzed.filter(p => p.sport === sport), [analyzed, sport]);
 
   const visible = useMemo(() => sportProps
@@ -302,13 +309,13 @@ export default function Home() {
     [sportProps, tab, saved, market, side, sportsbook, query, minHit, sortField, sortDescending]
   );
 
-  useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit]);
+  useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit, seasonView]);
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const displayed = useMemo(() => visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), [visible, safePage]);
   const selectedStats = useMemo(() => selected ? analyze(selected,
-    logIndex.get(`${selected.sport}|${normalize(selected.player)}|${selected.marketKey}`) || []
-  ) : null, [selected, logIndex]);
+    logIndex.get(`${selected.sport}|${normalize(selected.player)}|${selected.marketKey}`) || [], seasonFor(selected.sport)
+  ) : null, [selected, logIndex, seasonFor]);
 
   function importFile(f: File) {
     setImportError('');
@@ -565,6 +572,16 @@ export default function Home() {
 
           <div className="filters">
             <label className="select-wrap">
+              <CalendarDays size={16} />
+              <select aria-label="Historical season" value={seasonView}
+                onChange={e => setSeasonView(e.target.value as 'current' | 'previous' | 'all')}>
+                <option value="current">Season {seasonLabel(sport, currentSeason(sport))}</option>
+                <option value="previous">Season {seasonLabel(sport, currentSeason(sport) - 1)}</option>
+                <option value="all">All available seasons</option>
+              </select>
+              <ChevronDown size={15} />
+            </label>
+            <label className="select-wrap">
               <Filter size={16} />
               <select
                 aria-label="Sportsbook"
@@ -628,6 +645,7 @@ export default function Home() {
             </label>
           </div>
 
+          <p className="season-coverage">Historical filter: <strong>{seasonView === 'all' ? 'All available seasons' : seasonLabel(sport, seasonFor(sport)!)}</strong> · {seasonAvailable} matching statistic observations available. A missing result means missing coverage, not a 0% chance.</p>
           <div className="table-card">
             <div className="scroll-table">
               <table>
@@ -826,6 +844,11 @@ export default function Home() {
               <Target size={28} />
             </div>
 
+            <div className="season-summary">
+              <strong>{seasonView === 'all' ? 'All available seasons' : `Season ${seasonLabel(selected.sport, seasonFor(selected.sport)!)}`}</strong>
+              <span>{selectedStats.games.length} recorded games · {selectedStats.avg === null ? 'No average available' : `${selectedStats.avg.toFixed(1)} average (${Math.min(10, selectedStats.games.length)} most recent)`}</span>
+              <span>At this line: {selectedStats.season ? `${selectedStats.season.hits}/${selectedStats.season.total} hits (${selectedStats.season.pct}%)` : 'No matching history'}</span>
+            </div>
             <div className="drawer-stats">
               <div>
                 <small>LAST 5</small>
@@ -859,7 +882,7 @@ export default function Home() {
             </div>
 
             <div className="drawer-sub">
-              <strong>Last 10 games</strong>
+              <strong>Last 10 games · {seasonView === 'all' ? 'all seasons' : seasonLabel(selected.sport, seasonFor(selected.sport)! )}</strong>
               <small>
                 Line: {selected.line} · green = hit · orange = miss
                 · gray = push
