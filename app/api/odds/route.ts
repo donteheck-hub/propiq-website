@@ -6,15 +6,15 @@ export const dynamic = 'force-dynamic';
 
 const sportKeys: Record<Sport, string> = { NBA: 'basketball_nba', NFL: 'americanfootball_nfl' };
 const DEFAULT_MARKETS: Record<Sport, string[]> = {
-  NBA: ['player_points', 'player_rebounds'],
-  NFL: ['player_pass_yds', 'player_reception_yds'],
+  NBA: ['player_points', 'player_rebounds', 'player_assists', 'player_threes'],
+  NFL: ['player_pass_yds', 'player_reception_yds', 'player_rush_yds', 'player_receptions'],
 };
 
 type Payload = {
   props: Prop[]; configured: boolean; updatedAt: string;
   eventsChecked: number; availableEvents: number; warnings: string[]; notice: string;
 };
-type CacheEntry = { payload: Payload; expiresAt: number };
+type CacheEntry = { payload: Payload; centralDate: string };
 const cached: Partial<Record<Sport, CacheEntry>> = {};
 const inflight: Partial<Record<Sport, Promise<Payload>>> = {};
 let budgetDate = '';
@@ -22,17 +22,27 @@ let spentToday = 0;
 let pausedUntil = 0;
 let providerRemaining: number | null = null;
 let providerUsed: number | null = null;
+let providerLast: number | null = null;
 
 function boundedInteger(value: string | undefined, fallback: number, min: number, max: number) {
   const n = Number(value);
   return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
+const CENTRAL_TIMEZONE = 'America/Chicago';
+const centralDateFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+});
+function centralDate(timestamp = Date.now()) {
+  const parts = centralDateFormatter.formatToParts(new Date(timestamp));
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
 function config() {
   return {
-    cacheMs: boundedInteger(process.env.ODDS_CACHE_HOURS, 12, 1, 48) * 3600000,
     staleMs: 48 * 3600000,
-    maxEvents: boundedInteger(process.env.ODDS_MAX_EVENTS, 1, 1, 4),
-    dailyBudget: boundedInteger(process.env.ODDS_DAILY_CREDIT_BUDGET, 8, 1, 100),
+    maxEvents: boundedInteger(process.env.ODDS_MAX_EVENTS, 12, 1, 12),
+    dailyBudget: boundedInteger(process.env.ODDS_DAILY_CREDIT_BUDGET, 320, 1, 1200),
+    monthlyReserve: boundedInteger(process.env.ODDS_MONTHLY_CREDIT_RESERVE, 2000, 0, 20000),
   };
 }
 function marketsFor(sport: Sport) {
@@ -40,7 +50,7 @@ function marketsFor(sport: Sport) {
   const requested = process.env[key]?.split(',').map(s => s.trim()).filter(Boolean);
   const allowed = new Set(Object.keys(MARKETS[sport]));
   const valid = [...new Set((requested?.length ? requested : DEFAULT_MARKETS[sport]).filter(m => allowed.has(m)))];
-  return valid.slice(0, 4);
+  return valid.slice(0, 8);
 }
 function resetDailyBudget() {
   const today = new Date().toISOString().slice(0, 10);
@@ -51,13 +61,20 @@ function meta() {
   const settings = config();
   return {
     creditSaving: true,
-    cacheHours: settings.cacheMs / 3600000,
+    refreshSchedule: 'Once per Central Time calendar day, on the first request after midnight',
+    refreshTimezone: CENTRAL_TIMEZONE,
+    centralDate: centralDate(),
     usedToday: spentToday,
     dailyBudget: settings.dailyBudget,
     providerRemaining,
     providerUsed,
+    providerLast,
+    monthlyReserve: settings.monthlyReserve,
+    maxEvents: settings.maxEvents,
+    marketsNBA: marketsFor('NBA'),
+    marketsNFL: marketsFor('NFL'),
     pausedUntil: pausedUntil > Date.now() ? new Date(pausedUntil).toISOString() : null,
-    note: 'Credit budget and cache are per running server instance, not shared across Railway replicas or restarts.',
+    note: 'Local budget and cache are per Railway process, and reset on restarts. The provider remaining-credit header is the account-wide number when available. These controls are not a guaranteed billing cap.',
   };
 }
 class ProviderError extends Error {
@@ -69,6 +86,7 @@ async function readProvider(url: string, reservedCredits = 0): Promise<unknown> 
   const remaining = Number(response.headers.get('x-requests-remaining'));
   const used = Number(response.headers.get('x-requests-used'));
   if (response.headers.has('x-requests-remaining') && Number.isFinite(remaining)) providerRemaining = remaining;
+  if (response.headers.has('x-requests-last') && Number.isFinite(last)) providerLast = last;
   if (response.headers.has('x-requests-used') && Number.isFinite(used)) providerUsed = used;
   // We reserve an estimated cost before a provider request. When the provider
   // supplies its authoritative cost, reconcile the estimate, even on failures.
@@ -103,8 +121,8 @@ async function load(sport: Sport, key: string): Promise<Payload> {
     resetDailyBudget();
     // Cost can be up to one credit per market with the selected books/region.
     // Reserve conservatively before calling, and reject if the local cap is reached.
-    if (providerRemaining !== null && providerRemaining < mk.length) {
-      warnings.push('Provider reports insufficient remaining credits for the selected markets.');
+    if (providerRemaining !== null && providerRemaining - mk.length < settings.monthlyReserve) {
+      warnings.push(`Monthly reserve protected: provider reports ${providerRemaining} credits remaining; reserve is ${settings.monthlyReserve}.`);
       break;
     }
     if (spentToday + mk.length > settings.dailyBudget) {
@@ -142,7 +160,7 @@ async function load(sport: Sport, key: string): Promise<Payload> {
   }
   return { props, configured: true, updatedAt: new Date().toISOString(), eventsChecked: checked,
     availableEvents: upcoming.length, warnings,
-    notice: `Credit-saving mode: ${checked} of ${upcoming.length} upcoming games checked; ${mk.join(', ')} markets requested. ${warnings.join(' ')} ${props.length ? `${props.length} props returned.` : 'No player props returned.'}` };
+    notice: `Daily midnight Central refresh: ${checked} of ${upcoming.length} upcoming games checked; ${mk.join(', ')} markets requested. ${warnings.join(' ')} ${props.length ? `${props.length} props returned.` : 'No player props returned.'}` };
 }
 
 export async function GET(req: NextRequest) {
@@ -155,28 +173,37 @@ export async function GET(req: NextRequest) {
     notice: `${stale ? 'STALE ODDS — for reference only, not current prices. ' : 'Cached odds — no new API credits spent. '}${extra}${payload.notice}`,
     creditStatus: meta(),
   }, { headers: { 'Cache-Control': 'private, no-store' } });
-  if (entry && now < entry.expiresAt) return send(entry.payload, false);
+  // Never spend new credits twice in the same Central Time calendar day
+  // while this Railway process remains alive. The first visit after midnight
+  // triggers that day's refresh; a separate scheduler is needed for an exact
+  // unattended midnight run.
+  if (entry && entry.centralDate === centralDate(now)) return send(entry.payload, false);
   if (!key) {
     if (entry && now - Date.parse(entry.payload.updatedAt) < 48 * 3600000) return send(entry.payload, true, 'API key unavailable. ');
     return NextResponse.json({ props: [], configured: false, message: 'Set ODDS_API_KEY in Railway. Historical research can continue without live odds.', creditStatus: meta() }, { status: 503 });
   }
   resetDailyBudget();
   const settings = config();
-  const blocked = now < pausedUntil || spentToday >= settings.dailyBudget || providerRemaining === 0;
+  const blocked = now < pausedUntil || spentToday >= settings.dailyBudget || (providerRemaining !== null && providerRemaining <= settings.monthlyReserve);
   if (blocked) {
     if (entry && now - Date.parse(entry.payload.updatedAt) < settings.staleMs) return send(entry.payload, true, 'Requests paused to protect credits. ');
-    return NextResponse.json({ props: [], configured: true, message: 'Credit-saving mode paused new odds requests: daily budget, provider quota, or temporary authentication cooldown. Historical data remains separate.', creditStatus: meta() }, { status: 503 });
+    return NextResponse.json({ props: [], configured: true, message: 'Odds requests paused to protect the daily budget, monthly credit reserve, or during a provider authentication cooldown. Historical data remains separate.', creditStatus: meta() }, { status: 503 });
   }
   try {
-    if (!inflight[sport]) inflight[sport] = load(sport, key);
+    if (!inflight[sport]) {
+      const task = load(sport, key);
+      inflight[sport] = task;
+      // Remove only this exact request; another visitor may already be awaiting it.
+      void task.then(() => { if (inflight[sport] === task) delete inflight[sport]; },
+        () => { if (inflight[sport] === task) delete inflight[sport]; });
+    }
     const payload = await inflight[sport]!;
-    cached[sport] = { payload, expiresAt: Date.now() + settings.cacheMs };
+    cached[sport] = { payload, centralDate: centralDate() };
     return NextResponse.json({ ...payload, stale: false, cached: false, creditStatus: meta() }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
     if (entry && now - Date.parse(entry.payload.updatedAt) < settings.staleMs) return send(entry.payload, true, 'Provider request failed. ');
     const status = error instanceof ProviderError ? error.httpStatus : 502;
     return NextResponse.json({ props: [], configured: true, message: error instanceof Error ? error.message : 'Unable to load odds.', creditStatus: meta() }, { status });
-  } finally {
-    delete inflight[sport];
   }
 }
+
