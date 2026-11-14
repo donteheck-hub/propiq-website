@@ -162,3 +162,27 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 .finder-intro{display:flex;align-items:flex-start;gap:12px}.finder-icon{background:#4b1e2d;color:#ff7189;padding:11px;border-radius:12px;display:inline-flex}.finder-intro strong{color:#ffe4e8;font-size:15px}.finder-intro p{margin:6px 0 0;color:#bbaab5;line-height:1.5;font-size:12px}
 .finder-controls{display:flex;align-items:end;flex-wrap:wrap;gap:14px;margin-top:18px}.finder-controls label{display:flex;flex-direction:column;gap:7px;color:#ad9aa8;font-size:11px;font-weight:700}.finder-controls select{background:#1b1520;color:#f6e9ef;border:1px solid #64404f;border-radius:8px;padding:11px 14px;min-width:185px}.finder-count{display:flex;flex-direction:column;gap:3px;margin-left:auto}.finder-count strong{color:#ff7189;font-size:25px}.finder-count span{color:#ac99a4;font-size:11px}.finder-disclaimer{display:flex;align-items:center;gap:8px;border-top:1px solid #48303b;padding-top:13px;margin:18px 0 0;color:#b3a2ac;font-size:11px;line-height:1.5}
 @media(max-width:700px){.finder-panel{padding:15px}.finder-controls label,.finder-controls select{width:100%}.finder-count{margin-left:0}.finder-disclaimer{align-items:flex-start}}
+
+
+/* Phase 2 Update 2: exact-line sportsbook comparison */
+.odds-compare-area{margin:18px 0 24px}
+.odds-compare-note{display:flex;gap:11px;align-items:flex-start;padding:15px 17px;background:#201720;border:1px solid #50303e;border-radius:11px;color:#d8bdc7;font-size:12px;line-height:1.6}
+.odds-compare-note svg{color:#ff7085;flex-shrink:0}
+.odds-compare-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}
+.odds-compare-card{background:#17111b;border:1px solid #372733;border-radius:14px;padding:20px;min-width:0;box-shadow:0 12px 28px #0002}
+.odds-compare-player{display:flex;align-items:center;gap:12px}.odds-compare-player>div{min-width:0}
+.odds-compare-player strong{display:block;color:#fff2f4;font-size:15px}.odds-compare-player small{display:block;color:#af98a6;font-size:11px;margin-top:5px;overflow-wrap:anywhere}
+.odds-compare-line{margin:15px 0;font-size:13px;color:#eee0e6;font-weight:750;display:flex;align-items:center;gap:7px}
+.odds-offers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.odds-offer{min-width:0;padding:13px;background:#201824;border:1px solid #3d2b3a;border-radius:10px}
+.odds-offer.best{background:#152d27;border-color:#28634f}
+.odds-offer>span{display:flex;flex-wrap:wrap;gap:5px;align-items:center;color:#bea9b4;font-size:11px}
+.odds-offer>span b{color:#75e1b0;font-size:9px;letter-spacing:.3px}
+.odds-offer>strong{display:block;color:#f9eff2;font-size:25px;margin:8px 0}.odds-offer.best>strong{color:#70dfae}
+.odds-offer>small{color:#b09aaa;font-size:10px;line-height:1.45}
+.odds-difference{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:15px 0 12px;font-size:11px;color:#b8a5b2}
+.odds-difference strong{color:#73e2ae;font-size:17px;white-space:nowrap}
+.odds-view-research{width:100%;padding:10px;border:1px solid #624051;background:#2a1a28;border-radius:8px;color:#f4c2ce;font-size:12px;font-weight:750;cursor:pointer}
+.odds-view-research:hover{background:#3b2333}
+@media(max-width:1050px){.odds-compare-grid{grid-template-columns:1fr}}
+@media(max-width:470px){.odds-compare-card{padding:14px}.odds-offers{gap:7px}.odds-offer{padding:10px}.odds-offer>strong{font-size:21px}}

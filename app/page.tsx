@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDownUp, BarChart3, Bookmark, CalendarDays,
   ChevronDown, CircleHelp, Download, FileUp, Filter,
-  LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles,
+  LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles, ArrowLeftRight,
   SlidersHorizontal, Target, TrendingUp, X
 } from 'lucide-react';
 import {
@@ -39,6 +39,8 @@ type LiveStatus = 'loading' | 'live' | 'unavailable';
 type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
 type SortField = 'last5' | 'last10' | 'average';
 
+const profitOn100 = (odds: number) => odds > 0 ? odds : 10000 / Math.abs(odds);
+
 const normalizeBook = (name: string) =>
   name.toLowerCase().replace(/[^a-z]/g, '');
 
@@ -62,7 +64,7 @@ export default function Home() {
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
-  const [tab, setTab] = useState<'explore' | 'saved' | 'finder'>('explore');
+  const [tab, setTab] = useState<'explore' | 'saved' | 'finder' | 'odds'>('explore');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
@@ -389,6 +391,30 @@ export default function Home() {
   [allLogs, sport, seasonView, seasonFor]);
   const sportProps = useMemo(() => analyzed.filter(p => p.sport === sport), [analyzed, sport]);
 
+  // Only compare identical, live outcomes across distinct sportsbooks.
+  // Do not compare the same player at different lines or for different games.
+  const oddsComparisons = useMemo(() => {
+    const groups = new Map<string, Map<string, Prop>>();
+    for (const prop of sportProps) {
+      const book = normalizeBook(prop.bookmaker);
+      if (prop.source !== 'live' || !['draftkings', 'fanduel'].includes(book) ||
+          !Number.isFinite(prop.odds) || prop.odds === 0) continue;
+      if ((market !== 'all' && prop.marketKey !== market) ||
+          (side !== 'all' && prop.side !== side) ||
+          !`${prop.player} ${prop.event} ${prop.bookmaker}`.toLowerCase().includes(query.toLowerCase())) continue;
+      const key = [prop.sport, normalize(prop.player), normalize(prop.event), prop.commence,
+        prop.marketKey, prop.side, prop.line].join('|');
+      if (!groups.has(key)) groups.set(key, new Map());
+      const books = groups.get(key)!;
+      const old = books.get(book);
+      if (!old || prop.odds > old.odds) books.set(book, prop);
+    }
+    return [...groups.values()].filter(books => books.size >= 2).map(books => {
+      const offers = [...books.values()].sort((a, b) => b.odds - a.odds);
+      return { best: offers[0], other: offers[1], gain: profitOn100(offers[0].odds) - profitOn100(offers[1].odds) };
+    }).sort((a, b) => b.gain - a.gain || a.best.player.localeCompare(b.best.player));
+  }, [sportProps, market, side, query]);
+
   const visible = useMemo(() => sportProps
     .filter(p =>
       (tab !== 'saved' || saved.includes(p.id)) &&
@@ -567,6 +593,10 @@ export default function Home() {
           <Sparkles size={18} /> Smart Finder
         </button>
 
+        <button className={'nav ' + (tab === 'odds' ? 'active' : '')} onClick={() => { setTab('odds'); setMobileNavOpen(false); }}>
+          <ArrowLeftRight size={18} /> Odds Comparison
+        </button>
+
         <button
           className={'nav ' + (tab === 'saved' ? 'active' : '')}
           onClick={() => { setTab('saved'); setMobileNavOpen(false); }}
@@ -588,7 +618,7 @@ export default function Home() {
             <button className="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={21} /></button>
           <div className="crumb">
             Workspace <span>/</span>{' '}
-            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : 'Saved Props'}
+            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : 'Saved Props'}
           </div>
           </div>
 
@@ -612,7 +642,7 @@ export default function Home() {
               </div>
 
               <h1>
-                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : 'Your Watchlist'}
+                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : 'Your Watchlist'}
               </h1>
 
               <p>
@@ -719,14 +749,14 @@ export default function Home() {
           <div className="section-title premium-section-title">
             <div>
               <div className="eyebrow">RESEARCH DESK</div>
-              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : 'Explore player props'}</h2>
+              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : tab === 'odds' ? 'Compare sportsbook prices' : 'Explore player props'}</h2>
               <p>
-                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
+                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : tab === 'odds' ? 'Compare the exact same live player prop across DraftKings and FanDuel. Better prices increase potential payout, not the chance of winning.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
               </p>
             </div>
 
             <span className="results">
-              {visible.length} results
+              {tab === 'odds' ? oddsComparisons.length : visible.length} results
             </span>
           </div>
 
@@ -849,6 +879,38 @@ export default function Home() {
               </div>
             </div>
           )}
+          {tab === 'odds' ? (
+            <section className="odds-compare-area" aria-label="Sportsbook odds comparison">
+              <div className="odds-compare-note"><ArrowLeftRight size={18}/>
+                <span>Showing <strong>{oddsComparisons.length}</strong> exact-line matches across DraftKings and FanDuel. Both books are shown regardless of the sportsbook filter. $100 profit figures exclude the returned stake and any fees. Odds can change at any time.</span>
+              </div>
+              {oddsComparisons.length ? (
+                <div className="odds-compare-grid">
+                  {oddsComparisons.slice(0, 100).map(({ best, other, gain }) => (
+                    <article className="odds-compare-card" key={best.id + other.id}>
+                      <div className="odds-compare-player">
+                        <PlayerAvatar name={best.player} nbaPlayerId={best.sport === 'NBA' ? playerHeadshots.get(normalize(best.player)) : undefined}/>
+                        <div><strong>{best.player}</strong><small>{best.event}</small></div>
+                      </div>
+                      <div className="odds-compare-line"><Pill kind={best.side === 'Over' ? 'green' : 'purple'}>{best.side}</Pill> {best.line} {best.market}</div>
+                      <div className="odds-offers">
+                        {[best, other].map((offer, index) => (
+                          <div className={'odds-offer ' + (index === 0 ? 'best' : '')} key={offer.id}>
+                            <span>{offer.bookmaker}{index === 0 && <b>BEST PRICE</b>}</span>
+                            <strong>{fmtOdds(offer.odds)}</strong>
+                            <small>${profitOn100(offer.odds).toFixed(2)} profit / $100 stake</small>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="odds-difference"><span>Additional potential profit at best price</span><strong>+${gain.toFixed(2)}</strong></div>
+                      <button className="odds-view-research" type="button" onClick={() => {setSelected(best);setOpponentView('all');}}>View player research</button>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="empty"><h3>No matching prices at identical lines</h3><p>Both sportsbooks must offer the same player, game, market, direction, and line. Try resetting market and direction filters or refreshing live odds.</p></div>}
+              {oddsComparisons.length > 100 && <p className="muted smaller">Showing the 100 largest differences. Narrow your search to see other comparisons.</p>}
+            </section>
+          ) : (<>
           <div className="table-summary">
             <span><strong>{visible.length.toLocaleString()}</strong> matching props <span className="summary-separator">·</span> {sport} <span className="summary-separator">·</span> {seasonView === 'all' ? 'All seasons' : `Season ${seasonLabel(sport, seasonFor(sport)!)}`}</span>
             <span className="table-summary-hint">Select a row to open player research</span>
@@ -991,7 +1053,8 @@ export default function Home() {
             )}
           </div>
 
-          {comparison.length > 0 && (
+          </>)}
+          {tab !== 'odds' && comparison.length > 0 && (
             <section className="comparison-panel" aria-label="Selected prop comparison">
               <div className="comparison-head">
                 <div><h2>Compare player props ({comparison.length}/2)</h2>
@@ -1020,7 +1083,7 @@ export default function Home() {
             </section>
           )}
 
-          {visible.length > PAGE_SIZE && (
+          {tab !== 'odds' && visible.length > PAGE_SIZE && (
             <div className="heading-actions" style={{ justifyContent: 'center', marginTop: 16, marginBottom: 16 }}>
               <button className="btn secondary" disabled={safePage <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
                 Previous
