@@ -9,7 +9,7 @@ import {
   SlidersHorizontal, Target, TrendingUp, X
 } from 'lucide-react';
 import {
-  analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
+  analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, recentTrends, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
 } from '../lib/props';
 
 const STORAGE_KEY = 'prop-iq-v2';
@@ -65,6 +65,7 @@ export default function Home() {
   const [defenseRows, setDefenseRows] = useState<DefenseRow[]>([]);
   const [defenseError, setDefenseError] = useState('');
   const [saved, setSaved] = useState<string[]>([]);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const [modal, setModal] = useState(false);
   const [help, setHelp] = useState(false);
   const [importError, setImportError] = useState('');
@@ -324,6 +325,10 @@ export default function Home() {
     logIndex.get(`${selected.sport}|${normalize(selected.player)}|${selected.marketKey}`) || [], seasonFor(selected.sport)
   ) : null, [selected, logIndex, seasonFor]);
 
+  const selectedTrends = useMemo(() => selected && selectedStats
+    ? recentTrends(selectedStats.games, selected) : null, [selected, selectedStats]);
+  const comparison = useMemo(() => compareIds.map(id => analyzed.find(p => p.id === id))
+    .filter((p): p is (typeof analyzed)[number] => !!p && p.sport === sport), [compareIds, analyzed, sport]);
   const selectedSplits = useMemo(() => selected && selectedStats
     ? splitHistory(selected, selectedStats.games) : null, [selected, selectedStats]);
   const filteredOpponentGames = useMemo(() => !selectedStats ? [] :
@@ -699,6 +704,7 @@ export default function Home() {
                     <th><button type="button" className={"sort-header " + (sortField === "average" ? "sort-active" : "")} onClick={() => { setSortField("average"); setSortDescending(sortField === "average" ? !sortDescending : true); setPage(1); }}>L10 AVG {sortField === "average" ? (sortDescending ? "↓" : "↑") : "↕"}</button></th>
                     <th>BOOK / ODDS</th>
                     <th>DATA</th>
+                    <th>COMPARE</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -765,6 +771,15 @@ export default function Home() {
                       </td>
 
                       <td>
+                        <button type="button" className={'compare-toggle ' + (compareIds.includes(p.id) ? 'on' : '')}
+                          aria-label={`${compareIds.includes(p.id) ? 'Remove' : 'Add'} ${p.player} ${p.market} ${p.side} from comparison`}
+                          aria-pressed={compareIds.includes(p.id)}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setCompareIds(prev => prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev.slice(-1), p.id]);
+                          }}>{compareIds.includes(p.id) ? 'Selected' : 'Compare'}</button>
+                      </td>
+                      <td>
                         <button
                           className={
                             'bookmark ' +
@@ -809,6 +824,35 @@ export default function Home() {
               </div>
             )}
           </div>
+
+          {comparison.length > 0 && (
+            <section className="comparison-panel" aria-label="Selected prop comparison">
+              <div className="comparison-head">
+                <div><h2>Compare player props ({comparison.length}/2)</h2>
+                  <p>Side-by-side historical research for the selected season. Different markets may use different units.</p></div>
+                <button className="btn secondary" type="button" onClick={() => setCompareIds([])}>Clear comparison</button>
+              </div>
+              <div className="comparison-grid">
+                {comparison.map(p => {
+                  const trends = recentTrends(p.stats.games, p);
+                  return <div className="comparison-card" key={p.id}>
+                    <div className="comparison-name"><strong>{p.player}</strong>
+                      <button className="iconbtn" type="button" onClick={() => setCompareIds(ids => ids.filter(id => id !== p.id))} aria-label={`Remove ${p.player}`}><X size={16}/></button></div>
+                    <p>{p.side} {p.line} {p.market} · {p.bookmaker} ({fmtOdds(p.odds)})</p>
+                    <dl>
+                      <div><dt>Games recorded</dt><dd>{p.stats.games.length}</dd></div>
+                      <div><dt>Last 5 hits</dt><dd>{p.stats.hit5 ? `${p.stats.hit5.hits}/${p.stats.hit5.total}` : '—'}</dd></div>
+                      <div><dt>Last 10 hits</dt><dd>{p.stats.hit10 ? `${p.stats.hit10.hits}/${p.stats.hit10.total}` : '—'}</dd></div>
+                      <div><dt>Last 10 average</dt><dd>{p.stats.avg?.toFixed(1) ?? '—'}</dd></div>
+                      <div><dt>Last 10 median</dt><dd>{trends.median?.toFixed(1) ?? '—'}</dd></div>
+                      <div><dt>Last 5 vs prior 5</dt><dd>{trends.averageChange === null ? 'Need 10 games' : `${trends.averageChange >= 0 ? '+' : ''}${trends.averageChange.toFixed(1)}`}</dd></div>
+                    </dl>
+                  </div>;
+                })}
+              </div>
+              <small>These are observed results, not projected probabilities or a recommendation. Comparison clears if live lines change or disappear.</small>
+            </section>
+          )}
 
           {visible.length > PAGE_SIZE && (
             <div className="heading-actions" style={{ justifyContent: 'center', marginTop: 16, marginBottom: 16 }}>
@@ -894,6 +938,19 @@ export default function Home() {
               <span>{selectedStats.games.length} recorded games · {selectedStats.avg === null ? 'No average available' : `${selectedStats.avg.toFixed(1)} average (${Math.min(10, selectedStats.games.length)} most recent)`}</span>
               <span>At this line: {selectedStats.season ? `${selectedStats.season.hits}/${selectedStats.season.total} hits (${selectedStats.season.pct}%)` : 'No matching history'}</span>
             </div>
+            {selectedTrends && <section className="trend-research">
+              <div className="drawer-sub"><strong>Advanced Recent Trends</strong>
+                <small>Actual recorded games in the selected season; missing samples are not estimated.</small></div>
+              <div className="trend-grid">
+                <div><small>LAST 5 AVG</small><strong>{selectedTrends.recentAverage?.toFixed(1) ?? '—'}</strong></div>
+                <div><small>PREVIOUS 5 AVG</small><strong>{selectedTrends.previousAverage?.toFixed(1) ?? '—'}</strong></div>
+                <div><small>AVERAGE CHANGE</small><strong>{selectedTrends.averageChange === null ? '—' : `${selectedTrends.averageChange >= 0 ? '+' : ''}${selectedTrends.averageChange.toFixed(1)}`}</strong></div>
+                <div><small>LAST 10 MEDIAN</small><strong>{selectedTrends.median?.toFixed(1) ?? '—'}</strong></div>
+                <div><small>LAST 10 RANGE</small><strong>{selectedTrends.range ? `${selectedTrends.range.min}–${selectedTrends.range.max}` : '—'}</strong></div>
+                <div><small>CURRENT STREAK</small><strong>{selectedTrends.currentStreak.length ? `${selectedTrends.currentStreak.length} ${selectedTrends.currentStreak.kind.toUpperCase()}` : '—'}</strong></div>
+              </div>
+              <p className="split-note">Change requires two complete sets of five games. A streak counts consecutive recorded games at this exact line; it does not predict the next game.</p>
+            </section>}
             {selectedSplits && <section className="matchup-research">
               <div className="drawer-sub">
                 <strong>Home / Away Splits</strong>

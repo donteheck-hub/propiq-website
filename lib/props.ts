@@ -66,6 +66,29 @@ export function analyze(prop: Prop, logs: LogRow[], season?: number) {
   // Past hit frequency is NOT a validated future probability.
   return { games, avg, hit5: hit(5), hit10: hit(10), hit20: hit(20), season: hit(games.length || 1) };
 }
+// Descriptive recent-game trends, never model confidence or projected results.
+export function recentTrends(games: LogRow[], prop: Prop) {
+  const recent = games.slice(0, 10);
+  const last5 = recent.slice(0, 5);
+  const previous5 = recent.slice(5, 10);
+  const average = (rows: LogRow[]) => rows.length ? rows.reduce((sum, row) => sum + row.value, 0) / rows.length : null;
+  const recentAverage = average(last5);
+  const previousAverage = average(previous5);
+  const sorted = recent.map(g => g.value).sort((a,b) => a - b);
+  const median = sorted.length ? (sorted[Math.floor((sorted.length-1)/2)] + sorted[Math.floor(sorted.length/2)]) / 2 : null;
+  const range = recent.length ? { min: sorted[0], max: sorted[sorted.length-1] } : null;
+  const currentStreak = (() => {
+    if (!games.length) return { kind: 'none' as const, length: 0 };
+    const result = (value: number) => value === prop.line ? 'push' as const :
+      (prop.side === 'Over' ? value > prop.line : value < prop.line) ? 'hit' as const : 'miss' as const;
+    const kind = result(games[0].value);
+    let length = 0;
+    for (const game of games) { if (result(game.value) !== kind) break; length++; }
+    return { kind, length };
+  })();
+  return { recentAverage, previousAverage, averageChange: recentAverage !== null && previousAverage !== null && last5.length === 5 && previous5.length === 5 ? recentAverage - previousAverage : null,
+    median, range, currentStreak, sample: recent.length };
+}
 export function implied(odds: number) { return odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100); }
 export function parseCsv(content: string): LogRow[] {
   const lines = content.trim().split(/\r?\n/).filter(Boolean); if (lines.length < 2) return [];

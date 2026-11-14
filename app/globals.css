@@ -26,3 +26,19 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 .defense-panel p,.defense-hint{font-size:11px;line-height:1.55;color:#b9a8b1}
 .defense-error{font-size:12px;color:#ff9dac}.defense-hint code{color:#f2bfcd;word-break:break-word}
 @media(max-width:700px){.heading-actions{flex-wrap:wrap}.defense-metrics strong{font-size:16px}}
+
+/* Phase 1.5 — recent trends and side-by-side prop comparisons */
+.compare-toggle{border:1px solid #62414b;color:#f2a6b4;background:#2a1b25;border-radius:7px;padding:7px 10px;font-size:11px;font-weight:750}
+.compare-toggle:hover,.compare-toggle.on{background:#682b40;border-color:#e85a76;color:white}
+.comparison-panel{margin:18px 0 22px;background:#17111a;border:1px solid #593341;border-radius:12px;padding:20px}
+.comparison-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:15px}
+.comparison-head h2{font-size:18px;margin:0 0 6px}.comparison-head p,.comparison-panel>small{font-size:11px;color:#bdaeb6;line-height:1.6;margin:0}
+.comparison-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;margin-bottom:12px}
+.comparison-card{min-width:0;background:#241922;border:1px solid #4c303f;border-radius:10px;padding:16px}
+.comparison-name{display:flex;justify-content:space-between;align-items:center;gap:8px}.comparison-name strong{font-size:14px}
+.comparison-card p{font-size:11px;color:#c2aeb8;line-height:1.5;min-height:30px}
+.comparison-card dl{display:grid;gap:8px;margin:12px 0 0}.comparison-card dl div{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid #45303d;padding-top:8px}
+.comparison-card dt{font-size:11px;color:#b5a3ae}.comparison-card dd{font-size:12px;font-weight:800;margin:0;color:#ffe5eb;text-align:right}
+.trend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.trend-grid>div{min-width:0;padding:13px 9px;background:#241a24;border:1px solid #4a303d;border-radius:9px}
+.trend-grid small{font-size:9px;color:#bda4b2;font-weight:750;display:block;min-height:27px}.trend-grid strong{font-size:18px;color:#ff8195;display:block;margin-top:7px;overflow-wrap:anywhere}
+@media(max-width:700px){.comparison-head{align-items:flex-start;flex-direction:column}.comparison-grid{grid-template-columns:1fr}.trend-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
