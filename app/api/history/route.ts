@@ -86,10 +86,10 @@ function numeric(value: string | undefined): number | null {
 
 function pushStat(
   output: LogRow[], sport: Sport, player: string, marketKey: string,
-  date: string, value: number | null, opponent: string, venue?: 'home' | 'away'
+  date: string, value: number | null, opponent: string, venue?: 'home' | 'away', nbaPlayerId?: number
 ) {
   if (value === null || value < 0 || !player.trim() || !validLogDate(date)) return;
-  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue });
+  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue, ...(nbaPlayerId ? { nbaPlayerId } : {}) });
 }
 
 function nbaRows(input: CsvRow[]): LogRow[] {
@@ -101,17 +101,20 @@ function nbaRows(input: CsvRow[]): LogRow[] {
     if (!validLogDate(date)) continue;
     const opponent = row.matchup || row.opponent || '';
     const venue: 'home' | 'away' | undefined = /\s@\s/.test(opponent) ? 'away' : /\s(?:vs\.?|v\.)\s/i.test(opponent) ? 'home' : undefined;
+    // Only provider-supplied NBA identifiers can resolve to an NBA headshot.
+    const candidateId = Number(row.person_id || row.player_id || row.playerid || row.personid || '');
+    const nbaPlayerId = Number.isSafeInteger(candidateId) && candidateId >= 1000 && candidateId < 100000000 ? candidateId : undefined;
     const pts = numeric(row.pts);
     const reb = numeric(row.reb);
     const ast = numeric(row.ast);
-    pushStat(output, 'NBA', player, 'player_points', date, pts, opponent, venue);
-    pushStat(output, 'NBA', player, 'player_rebounds', date, reb, opponent, venue);
-    pushStat(output, 'NBA', player, 'player_assists', date, ast, opponent, venue);
-    pushStat(output, 'NBA', player, 'player_threes', date, numeric(row.fg3m), opponent, venue);
-    pushStat(output, 'NBA', player, 'player_blocks', date, numeric(row.blk), opponent, venue);
-    pushStat(output, 'NBA', player, 'player_steals', date, numeric(row.stl), opponent, venue);
+    pushStat(output, 'NBA', player, 'player_points', date, pts, opponent, venue, nbaPlayerId);
+    pushStat(output, 'NBA', player, 'player_rebounds', date, reb, opponent, venue, nbaPlayerId);
+    pushStat(output, 'NBA', player, 'player_assists', date, ast, opponent, venue, nbaPlayerId);
+    pushStat(output, 'NBA', player, 'player_threes', date, numeric(row.fg3m), opponent, venue, nbaPlayerId);
+    pushStat(output, 'NBA', player, 'player_blocks', date, numeric(row.blk), opponent, venue, nbaPlayerId);
+    pushStat(output, 'NBA', player, 'player_steals', date, numeric(row.stl), opponent, venue, nbaPlayerId);
     pushStat(output, 'NBA', player, 'player_points_rebounds_assists', date,
-      pts !== null && reb !== null && ast !== null ? pts + reb + ast : null, opponent, venue);
+      pts !== null && reb !== null && ast !== null ? pts + reb + ast : null, opponent, venue, nbaPlayerId);
   }
   return output;
 }

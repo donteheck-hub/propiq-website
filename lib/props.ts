@@ -1,6 +1,6 @@
 export type Sport = 'NBA' | 'NFL';
 export type Prop = { id: string; sport: Sport; player: string; market: string; marketKey: string; line: number; side: 'Over' | 'Under'; odds: number; bookmaker: string; event: string; commence: string; source: 'live' | 'manual' | 'demo' };
-export type LogRow = { sport: Sport; player: string; marketKey: string; date: string; value: number; opponent?: string; venue?: 'home' | 'away' };
+export type LogRow = { sport: Sport; player: string; marketKey: string; date: string; value: number; opponent?: string; venue?: 'home' | 'away'; nbaPlayerId?: number };
 export const MARKETS: Record<Sport, Record<string, string>> = {
   NBA: { player_points: 'Points', player_rebounds: 'Rebounds', player_assists: 'Assists', player_threes: '3-Pointers', player_blocks: 'Blocks', player_steals: 'Steals', player_points_rebounds_assists: 'Pts + Reb + Ast' },
   NFL: { player_pass_yds: 'Passing Yards', player_rush_yds: 'Rushing Yards', player_reception_yds: 'Receiving Yards', player_receptions: 'Receptions', player_pass_tds: 'Passing TDs', player_rush_attempts: 'Rushing Attempts', player_pass_completions: 'Completions' }

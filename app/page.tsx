@@ -42,6 +42,21 @@ type SortField = 'last5' | 'last10' | 'average';
 const normalizeBook = (name: string) =>
   name.toLowerCase().replace(/[^a-z]/g, '');
 
+// Images are optional enhancements: if the historical provider does not supply a
+// verified NBA person ID, or the CDN has no photo, use an initials avatar.
+function PlayerAvatar({ name, nbaPlayerId, size = 'table' }: { name: string; nbaPlayerId?: number; size?: 'table' | 'large' }) {
+  const [failed, setFailed] = useState(false);
+  const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || 'PI';
+  const showPhoto = Number.isSafeInteger(nbaPlayerId) && !!nbaPlayerId && !failed;
+  return (
+    <span className={'player-avatar ' + (size === 'large' ? 'avatar-large' : '')} aria-hidden="true">
+      {showPhoto ? (
+        <img src={`https://cdn.nba.com/headshots/nba/latest/260x190/${nbaPlayerId}.png`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+      ) : <span>{initials}</span>}
+    </span>
+  );
+}
+
 export default function Home() {
   const [sport, setSport] = useState<Sport>('NBA');
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
@@ -315,6 +330,18 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, sport, historyPlayerKey, seasonView]);
 
+  // Derive photos exclusively from identifiers accompanying matched NBA game logs.
+  const playerHeadshots = useMemo(() => {
+    const ids = new Map<string, number>();
+    for (const row of [...autoLogs, ...logs]) {
+      if (row.sport === 'NBA' && Number.isSafeInteger(row.nbaPlayerId) &&
+          (row.nbaPlayerId ?? 0) >= 1000 && (row.nbaPlayerId ?? 0) < 100000000) {
+        ids.set(normalize(row.player), row.nbaPlayerId!);
+      }
+    }
+    return ids;
+  }, [autoLogs, logs]);
+
   const allLogs = useMemo(() => {
     const map = new Map<string, LogRow>();
     for (const row of autoLogs) {
@@ -568,7 +595,7 @@ export default function Home() {
           </div>
         </header>
 
-        <div className="content">
+        <div className="content premium-content">
           <div className="heading">
             <div>
               <div className="eyebrow">
@@ -629,7 +656,7 @@ export default function Home() {
             </span>
           </div>
 
-          <section className="stats-grid">
+          <section className="stats-grid" aria-label="Research overview">
             <div className="stat">
               <div className="stat-top">
                 AVAILABLE PROPS <BarChart3 size={18} />
@@ -680,9 +707,10 @@ export default function Home() {
             <span>{oddsCoverage || 'Live odds coverage details appear after refresh.'} {historyStatus} Hit rates use available games; incomplete samples are labeled.</span>
           </div>
 
-          <div className="section-title">
+          <div className="section-title premium-section-title">
             <div>
-              <h2>Explore player props</h2>
+              <div className="eyebrow">RESEARCH DESK</div>
+              <h2>{tab === 'saved' ? 'Saved player props' : 'Explore player props'}</h2>
               <p>
                 Click Last 5, Last 10, or L10 AVG to sort player props.
                 Click a prop for a game-by-game breakdown.
@@ -694,6 +722,10 @@ export default function Home() {
             </span>
           </div>
 
+          <div className="research-toolbar">
+            <span><SlidersHorizontal size={15} /> Research filters</span>
+            <button type="button" className="reset-filters" onClick={() => { setQuery(''); setMarket('all'); setSide('all'); setMinHit(0); setSportsbook('both'); setSeasonView('current'); }}>Reset filters</button>
+          </div>
           <div className="filters">
             <label className="select-wrap">
               <CalendarDays size={16} />
@@ -782,7 +814,11 @@ export default function Home() {
               </div>
             </div>
           )}
-          <div className="table-card">
+          <div className="table-summary">
+            <span><strong>{visible.length.toLocaleString()}</strong> matching props <span className="summary-separator">·</span> {sport} <span className="summary-separator">·</span> {seasonView === 'all' ? 'All seasons' : `Season ${seasonLabel(sport, seasonFor(sport)!)}`}</span>
+            <span className="table-summary-hint">Select a row to open player research</span>
+          </div>
+          <div className="table-card premium-table">
             <div className="scroll-table">
               <table>
                 <thead>
@@ -806,8 +842,13 @@ export default function Home() {
                       onClick={() => { setSelected(p); setOpponentView('all'); }}
                     >
                       <td>
-                        <div className="player-name">{p.player}</div>
-                        <div className="muted smaller">{p.event}</div>
+                        <div className="player-identity">
+                          <PlayerAvatar name={p.player} nbaPlayerId={p.sport === 'NBA' ? playerHeadshots.get(normalize(p.player)) : undefined} />
+                          <div className="player-identity-text">
+                            <div className="player-name">{p.player}</div>
+                            <div className="muted smaller">{p.event}</div>
+                          </div>
+                        </div>
                       </td>
 
                       <td>
@@ -993,12 +1034,13 @@ export default function Home() {
             onClick={e => e.stopPropagation()}
           >
             <div className="drawer-head">
-              <div>
-                <span className="eyebrow">
-                  PLAYER PROP BREAKDOWN
-                </span>
-                <h2>{selected.player}</h2>
-                <p>{selected.event}</p>
+              <div className="drawer-player-identity">
+                <PlayerAvatar name={selected.player} size="large" nbaPlayerId={selected.sport === 'NBA' ? playerHeadshots.get(normalize(selected.player)) : undefined} />
+                <div>
+                  <span className="eyebrow">PLAYER RESEARCH</span>
+                  <h2>{selected.player}</h2>
+                  <p>{selected.event}</p>
+                </div>
               </div>
 
               <button
