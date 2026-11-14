@@ -1,6 +1,6 @@
 export type Sport = 'NBA' | 'NFL';
 export type Prop = { id: string; sport: Sport; player: string; market: string; marketKey: string; line: number; side: 'Over' | 'Under'; odds: number; bookmaker: string; event: string; commence: string; source: 'live' | 'manual' | 'demo' };
-export type LogRow = { sport: Sport; player: string; marketKey: string; date: string; value: number; opponent?: string };
+export type LogRow = { sport: Sport; player: string; marketKey: string; date: string; value: number; opponent?: string; venue?: 'home' | 'away' };
 export const MARKETS: Record<Sport, Record<string, string>> = {
   NBA: { player_points: 'Points', player_rebounds: 'Rebounds', player_assists: 'Assists', player_threes: '3-Pointers', player_blocks: 'Blocks', player_steals: 'Steals', player_points_rebounds_assists: 'Pts + Reb + Ast' },
   NFL: { player_pass_yds: 'Passing Yards', player_rush_yds: 'Rushing Yards', player_reception_yds: 'Receiving Yards', player_receptions: 'Receptions', player_pass_tds: 'Passing TDs', player_rush_attempts: 'Rushing Attempts', player_pass_completions: 'Completions' }
@@ -22,6 +22,33 @@ export function currentSeason(sport: Sport, today = new Date()): number {
 }
 export function seasonLabel(sport: Sport, year: number): string {
   return sport === 'NBA' ? `${year}-${String((year + 1) % 100).padStart(2, '0')}` : String(year);
+}
+// Only infer venue from an explicit matchup marker; opponent-only strings are unknown.
+export function gameVenue(row: LogRow): 'home' | 'away' | null {
+  if (row.venue === 'home' || row.venue === 'away') return row.venue;
+  const matchup = row.opponent || '';
+  if (/\s@\s/.test(matchup)) return 'away';
+  if (/\s(?:vs\.?|v\.)\s/i.test(matchup)) return 'home';
+  return null;
+}
+export function gameOpponent(row: LogRow): string | null {
+  const raw = (row.opponent || '').trim();
+  if (!raw) return null;
+  const matchup = raw.match(/\s(?:@|vs\.?|v\.)\s+(.+)$/i);
+  return (matchup ? matchup[1] : raw).trim().toUpperCase() || null;
+}
+export function splitHistory(prop: Prop, games: LogRow[]) {
+  const summarize = (rows: LogRow[]) => {
+    const hits = rows.filter(g => prop.side === 'Over' ? g.value > prop.line : g.value < prop.line).length;
+    const pushes = rows.filter(g => g.value === prop.line).length;
+    return { games: rows.length, hits, pushes, pct: rows.length ? Math.round(100 * hits / rows.length) : null,
+      average: rows.length ? rows.reduce((sum, row) => sum + row.value, 0) / rows.length : null };
+  };
+  const home = games.filter(g => gameVenue(g) === 'home');
+  const away = games.filter(g => gameVenue(g) === 'away');
+  const known = home.length + away.length;
+  const opponents = [...new Set(games.map(gameOpponent).filter((x): x is string => !!x))].sort();
+  return { home: summarize(home), away: summarize(away), unknownVenue: games.length - known, opponents, summarize };
 }
 export type HitRate = { hits: number; total: number; pushes: number; pct: number; complete: boolean };
 export function analyze(prop: Prop, logs: LogRow[], season?: number) {
@@ -46,5 +73,5 @@ export function parseCsv(content: string): LogRow[] {
   const headers = split(lines[0]).map(x => x.replace(/^\ufeff/, '').toLowerCase());
   const required = ['sport', 'player', 'marketkey', 'date', 'value'];
   if (required.some(k => !headers.includes(k))) throw Error('CSV needs columns: sport,player,marketKey,date,value (optional: opponent)');
-  return lines.slice(1).map(line => { const cells = split(line), get = (k: string) => { const i = headers.indexOf(k); return i < 0 ? '' : cells[i] ?? ''; }; return { sport: get('sport').toUpperCase() as Sport, player: get('player'), marketKey: get('marketkey'), date: get('date'), value: Number(get('value')), opponent: get('opponent') }; }).filter(r => (r.sport === 'NBA' || r.sport === 'NFL') && !!r.player && !!r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && !!MARKETS[r.sport][r.marketKey]);
+  return lines.slice(1).map(line => { const cells = split(line), get = (k: string) => { const i = headers.indexOf(k); return i < 0 ? '' : cells[i] ?? ''; }; return { sport: get('sport').toUpperCase() as Sport, player: get('player'), marketKey: get('marketkey'), date: get('date'), value: Number(get('value')), opponent: get('opponent'), venue: (['home', 'h'].includes(get('venue').toLowerCase()) ? 'home' : ['away', 'a'].includes(get('venue').toLowerCase()) ? 'away' : undefined) as 'home' | 'away' | undefined }; }).filter(r => (r.sport === 'NBA' || r.sport === 'NFL') && !!r.player && !!r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && !!MARKETS[r.sport][r.marketKey]);
 }

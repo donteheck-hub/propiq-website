@@ -75,10 +75,10 @@ function numeric(value: string | undefined): number | null {
 
 function pushStat(
   output: LogRow[], sport: Sport, player: string, marketKey: string,
-  date: string, value: number | null, opponent: string
+  date: string, value: number | null, opponent: string, venue?: 'home' | 'away'
 ) {
   if (value === null || !player || !date) return;
-  output.push({ sport, player: player.trim(), marketKey, date, value, opponent });
+  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue });
 }
 
 function nbaRows(input: CsvRow[]): LogRow[] {
@@ -89,17 +89,18 @@ function nbaRows(input: CsvRow[]): LogRow[] {
     const date = (row.game_date || row.date || '').slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
     const opponent = row.matchup || row.opponent || '';
+    const venue: 'home' | 'away' | undefined = /\s@\s/.test(opponent) ? 'away' : /\s(?:vs\.?|v\.)\s/i.test(opponent) ? 'home' : undefined;
     const pts = numeric(row.pts);
     const reb = numeric(row.reb);
     const ast = numeric(row.ast);
-    pushStat(output, 'NBA', player, 'player_points', date, pts, opponent);
-    pushStat(output, 'NBA', player, 'player_rebounds', date, reb, opponent);
-    pushStat(output, 'NBA', player, 'player_assists', date, ast, opponent);
-    pushStat(output, 'NBA', player, 'player_threes', date, numeric(row.fg3m), opponent);
-    pushStat(output, 'NBA', player, 'player_blocks', date, numeric(row.blk), opponent);
-    pushStat(output, 'NBA', player, 'player_steals', date, numeric(row.stl), opponent);
+    pushStat(output, 'NBA', player, 'player_points', date, pts, opponent, venue);
+    pushStat(output, 'NBA', player, 'player_rebounds', date, reb, opponent, venue);
+    pushStat(output, 'NBA', player, 'player_assists', date, ast, opponent, venue);
+    pushStat(output, 'NBA', player, 'player_threes', date, numeric(row.fg3m), opponent, venue);
+    pushStat(output, 'NBA', player, 'player_blocks', date, numeric(row.blk), opponent, venue);
+    pushStat(output, 'NBA', player, 'player_steals', date, numeric(row.stl), opponent, venue);
     pushStat(output, 'NBA', player, 'player_points_rebounds_assists', date,
-      pts !== null && reb !== null && ast !== null ? pts + reb + ast : null, opponent);
+      pts !== null && reb !== null && ast !== null ? pts + reb + ast : null, opponent, venue);
   }
   return output;
 }

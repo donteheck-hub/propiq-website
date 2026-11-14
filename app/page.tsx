@@ -60,6 +60,7 @@ export default function Home() {
   const [side, setSide] = useState('all');
   const [minHit, setMinHit] = useState(0);
   const [selected, setSelected] = useState<Prop | null>(null);
+  const [opponentView, setOpponentView] = useState('all');
   const [saved, setSaved] = useState<string[]>([]);
   const [modal, setModal] = useState(false);
   const [help, setHelp] = useState(false);
@@ -316,6 +317,16 @@ export default function Home() {
   const selectedStats = useMemo(() => selected ? analyze(selected,
     logIndex.get(`${selected.sport}|${normalize(selected.player)}|${selected.marketKey}`) || [], seasonFor(selected.sport)
   ) : null, [selected, logIndex, seasonFor]);
+
+  const selectedSplits = useMemo(() => selected && selectedStats
+    ? splitHistory(selected, selectedStats.games) : null, [selected, selectedStats]);
+  const filteredOpponentGames = useMemo(() => !selectedStats ? [] :
+    opponentView === 'all' ? selectedStats.games :
+    selectedStats.games.filter(g => gameOpponent(g) === opponentView),
+    [selectedStats, opponentView]);
+  const opponentSummary = useMemo(() => selected && selectedSplits
+    ? selectedSplits.summarize(filteredOpponentGames) : null,
+    [selected, selectedSplits, filteredOpponentGames]);
 
   function importFile(f: File) {
     setImportError('');
@@ -666,7 +677,7 @@ export default function Home() {
                   {displayed.map(({ stats, ...p }) => (
                     <tr
                       key={p.id}
-                      onClick={() => setSelected(p)}
+                      onClick={() => { setSelected(p); setOpponentView('all'); }}
                     >
                       <td>
                         <div className="player-name">{p.player}</div>
@@ -849,6 +860,40 @@ export default function Home() {
               <span>{selectedStats.games.length} recorded games · {selectedStats.avg === null ? 'No average available' : `${selectedStats.avg.toFixed(1)} average (${Math.min(10, selectedStats.games.length)} most recent)`}</span>
               <span>At this line: {selectedStats.season ? `${selectedStats.season.hits}/${selectedStats.season.total} hits (${selectedStats.season.pct}%)` : 'No matching history'}</span>
             </div>
+            {selectedSplits && <section className="matchup-research">
+              <div className="drawer-sub">
+                <strong>Home / Away Splits</strong>
+                <small>Only games with confirmed location metadata are included. These are historical results, not projections.</small>
+              </div>
+              <div className="split-grid">
+                {([['HOME', selectedSplits.home], ['AWAY', selectedSplits.away]] as const).map(([name, summary]) => (
+                  <div className="split-card" key={name}>
+                    <small>{name} · {summary.games} games</small>
+                    <b>{summary.pct === null ? '—' : `${summary.pct}%`}</b>
+                    <span>{summary.games ? `${summary.hits}/${summary.games} hits · ${summary.average?.toFixed(1)} avg` : 'No verified venue data'}</span>
+                  </div>
+                ))}
+              </div>
+              {selectedSplits.unknownVenue > 0 &&
+                <p className="split-note">{selectedSplits.unknownVenue} games excluded from venue splits because home/away is unknown.</p>}
+              <div className="drawer-sub">
+                <strong>Opponent Matchup History</strong>
+                <small>Filter recorded games by opponent. Select an opponent to view past results against that team.</small>
+              </div>
+              <label className="matchup-select-label">Opponent
+                <select className="matchup-select" value={selectedSplits.opponents.includes(opponentView) ? opponentView : 'all'}
+                  onChange={e => setOpponentView(e.target.value)}>
+                  <option value="all">All opponents</option>
+                  {selectedSplits.opponents.map(team => <option key={team} value={team}>{team}</option>)}
+                </select>
+              </label>
+              {opponentSummary && <div className="opponent-summary">
+                <span><strong>{opponentSummary.games}</strong> games</span>
+                <span><strong>{opponentSummary.pct === null ? '—' : `${opponentSummary.pct}%`}</strong> hit rate</span>
+                <span><strong>{opponentSummary.average === null ? '—' : opponentSummary.average.toFixed(1)}</strong> average</span>
+              </div>}
+              {selectedSplits.opponents.length === 0 && <p className="split-note">Opponent information is not available for these records.</p>}
+            </section>}
             <div className="drawer-stats">
               <div>
                 <small>LAST 5</small>
@@ -882,17 +927,17 @@ export default function Home() {
             </div>
 
             <div className="drawer-sub">
-              <strong>Last 10 games · {seasonView === 'all' ? 'all seasons' : seasonLabel(selected.sport, seasonFor(selected.sport)! )}</strong>
+              <strong>{opponentView === 'all' ? 'Last 10 games' : `Last 10 vs ${opponentView}`} · {seasonView === 'all' ? 'all seasons' : seasonLabel(selected.sport, seasonFor(selected.sport)! )}</strong>
               <small>
                 Line: {selected.line} · green = hit · orange = miss
                 · gray = push
               </small>
             </div>
 
-            {selectedStats.games.length ? (
+            {filteredOpponentGames.length ? (
               <>
                 <div className="bars">
-                  {selectedStats.games
+                  {filteredOpponentGames
                     .slice(0, 10)
                     .reverse()
                     .map((g, i) => {
@@ -903,7 +948,7 @@ export default function Home() {
                       const push = g.value === selected.line;
 
                       const maxValue = Math.max(
-                        ...selectedStats.games
+                        ...filteredOpponentGames
                           .slice(0, 10)
                           .map(r => r.value),
                         1
@@ -936,7 +981,7 @@ export default function Home() {
                 </div>
 
                 <div className="game-list">
-                  {selectedStats.games.slice(0, 20).map((g, i) => {
+                  {filteredOpponentGames.slice(0, 20).map((g, i) => {
                     const hit = selected.side === 'Over'
                       ? g.value > selected.line
                       : g.value < selected.line;
@@ -947,7 +992,7 @@ export default function Home() {
                       <div key={i}>
                         <span>
                           {g.date}
-                          {g.opponent ? ` · ${g.opponent}` : ''}
+                          {gameOpponent(g) ? ` · ${gameOpponent(g)}` : ''}{gameVenue(g) ? ` · ${gameVenue(g) === 'home' ? 'HOME' : 'AWAY'}` : ''}
                         </span>
                         <b>{g.value}</b>
                         <Pill kind={
@@ -962,7 +1007,7 @@ export default function Home() {
               </>
             ) : (
               <div className="empty">
-                <h3>No matching game logs</h3>
+                <h3>{opponentView === 'all' ? 'No matching game logs' : 'No games recorded against this opponent'}</h3>
                 <p>
                   Import historical records with the exact player
                   name and market key to calculate hit rates.
