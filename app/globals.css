@@ -42,3 +42,79 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 .trend-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}.trend-grid>div{min-width:0;padding:13px 9px;background:#241a24;border:1px solid #4a303d;border-radius:9px}
 .trend-grid small{font-size:9px;color:#bda4b2;font-weight:750;display:block;min-height:27px}.trend-grid strong{font-size:18px;color:#ff8195;display:block;margin-top:7px;overflow-wrap:anywhere}
 @media(max-width:700px){.comparison-head{align-items:flex-start;flex-direction:column}.comparison-grid{grid-template-columns:1fr}.trend-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+/* Cleanup 1 — premium workspace layout and accessible mobile navigation */
+:root{--content-max:1510px}
+.shell{min-width:0}
+.sidebar{z-index:30;box-shadow:8px 0 30px #05030818}
+.sidebar .logo{margin-bottom:42px}
+.sidebar .nav{transition:background .18s ease,color .18s ease}
+.sidebar .nav:focus-visible,.top-help:focus-visible,.mobile-menu-button:focus-visible,.sidebar-close:focus-visible{outline:2px solid #ff7187;outline-offset:3px}
+.topbar-leading{display:flex;align-items:center;gap:14px;min-width:0}
+.topbar .crumb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.top-help,.mobile-menu-button{width:37px;height:37px;display:inline-flex;align-items:center;justify-content:center;background:#201720;color:#d5b8c4;border:1px solid #513340;border-radius:9px;flex-shrink:0}
+.top-help:hover,.mobile-menu-button:hover{background:#3c202d;color:white}
+.mobile-menu-button,.sidebar-close,.mobile-nav-scrim{display:none}
+.content{max-width:var(--content-max)}
+.heading{align-items:flex-start}
+.heading h1{line-height:1.15}
+.heading-actions{flex-wrap:wrap;justify-content:flex-end}
+.stats-grid .stat{min-width:0;transition:border-color .15s ease}
+.stats-grid .stat:hover{border-color:#704353}
+.stat strong{font-variant-numeric:tabular-nums}
+.section-title{gap:14px;align-items:flex-end}
+.filters{align-items:stretch}
+.search:focus-within,.select-wrap:focus-within{border-color:#e65c77;box-shadow:0 0 0 2px #e65c7720}
+.table-card{box-shadow:0 12px 32px #0000001c}
+.scroll-table{overscroll-behavior-x:contain}
+.scroll-table th{position:relative}
+.scroll-table td{vertical-align:middle}
+.scroll-table th:first-child,.scroll-table td:first-child{padding-left:21px}
+.drawer{scrollbar-color:#694153 #110c14}
+@media(max-width:1100px){.heading-actions .btn{padding:11px 12px}}
+@media(max-width:700px){
+ .shell{display:block}
+ .sidebar{position:fixed;inset:0 auto 0 0;width:min(295px,82vw);height:100dvh;z-index:55;padding:27px 17px;transform:translateX(-105%);transition:transform .2s ease;box-shadow:16px 0 50px #0008}
+ .sidebar.mobile-open{transform:translateX(0)}
+ .sidebar .logo{font-size:24px;margin:0 30px 38px 7px}
+ .sidebar .logo>div:last-child{display:block}
+ .sidebar .side-label{display:block;font-size:10px}
+ .sidebar .nav,.sidebar .nav.active{font-size:13px;justify-content:flex-start;padding:13px 15px}
+ .sidebar .nav:not(.active){font-size:13px}
+ .sidebar .nav b{font-size:12px}
+ .sidebar .sidebar-bottom{display:block}
+ .sidebar-close{display:inline-flex;position:absolute;right:14px;top:20px}
+ .mobile-menu-button{display:inline-flex}
+ .mobile-nav-scrim{display:block;position:fixed;inset:0;background:#000a;border:0;z-index:54;width:100%;height:100%;padding:0}
+ .main{width:100%}
+ .topbar{padding:0 14px;gap:10px}
+ .topbar-leading{gap:10px}
+ .crumb{font-size:11px}
+ .crumb span{margin:0 6px}
+ .top-actions{gap:8px}
+ .top-actions .pill{font-size:8px;padding:5px 6px}
+ .content{padding:23px 14px 44px}
+ .heading{gap:17px}
+ .heading-actions{justify-content:flex-start;width:100%}
+ .heading-actions .btn{flex:1;min-width:0;font-size:11px;white-space:normal}
+ .heading h1{font-size:27px}
+ .heading p{line-height:1.55}
+ .sport-tabs{margin-top:21px}
+ .sport-tabs button{padding:13px 16px}
+ .section-title{align-items:flex-start}
+ .section-title h2{font-size:17px}
+ .section-title p{line-height:1.5}
+ .results{flex-shrink:0}
+ .stat{min-width:0}
+ .stat-top{line-height:1.5}
+ .stat strong{font-size:25px}
+ .stat small{line-height:1.45;display:block}
+ .filters{gap:8px}
+ .search{order:-1;min-width:0;flex:1 0 100%}
+ .select-wrap{min-width:0;flex:1 1 calc(50% - 8px)}
+ .select-wrap select{min-width:0;max-width:100%;flex:1}
+ .drawer{width:100%}
+}
+@media(max-width:380px){.stat{padding:11px}.stat-top{font-size:8px}.topbar .crumb{max-width:120px}}
+@media(prefers-reduced-motion:reduce){.sidebar,.sidebar .nav,.stats-grid .stat{transition:none}}

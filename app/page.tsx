@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, ArrowDownUp, BarChart3, Bookmark, CalendarDays,
   ChevronDown, CircleHelp, Download, FileUp, Filter,
-  LayoutDashboard, Plus, RefreshCw, Search, ShieldCheck,
+  LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck,
   SlidersHorizontal, Target, TrendingUp, X
 } from 'lucide-react';
 import {
@@ -48,6 +48,7 @@ export default function Home() {
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
   const [tab, setTab] = useState<'explore' | 'saved'>('explore');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [autoLogs, setAutoLogs] = useState<LogRow[]>([]);
@@ -445,7 +446,10 @@ export default function Home() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {mobileNavOpen && (
+        <button className="mobile-nav-scrim" type="button" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />
+      )}
+      <aside className={'sidebar ' + (mobileNavOpen ? 'mobile-open' : '')} aria-label="Main navigation">
         <div className="logo">
           <div className="logo-icon">
             <Activity size={24} />
@@ -456,11 +460,12 @@ export default function Home() {
           </div>
         </div>
 
+        <button className="sidebar-close iconbtn" type="button" aria-label="Close menu" onClick={() => setMobileNavOpen(false)}><X size={19} /></button>
         <div className="side-label">WORKSPACE</div>
 
         <button
           className={'nav ' + (tab === 'explore' ? 'active' : '')}
-          onClick={() => setTab('explore')}
+          onClick={() => { setTab('explore'); setMobileNavOpen(false); }}
         >
           <LayoutDashboard size={18} />
           Prop Explorer
@@ -468,7 +473,7 @@ export default function Home() {
 
         <button
           className={'nav ' + (tab === 'saved' ? 'active' : '')}
-          onClick={() => setTab('saved')}
+          onClick={() => { setTab('saved'); setMobileNavOpen(false); }}
         >
           <Bookmark size={18} />
           Saved Props <b>{saved.length || ''}</b>
@@ -483,9 +488,12 @@ export default function Home() {
 
       <main className="main">
         <header className="topbar">
+          <div className="topbar-leading">
+            <button className="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={21} /></button>
           <div className="crumb">
             Workspace <span>/</span>{' '}
             {tab === 'explore' ? 'Prop Explorer' : 'Saved Props'}
+          </div>
           </div>
 
           <div className="top-actions">
@@ -496,7 +504,7 @@ export default function Home() {
                   ? 'LIVE ODDS'
                   : 'ODDS UNAVAILABLE'}
             </Pill>
-            <button className="avatar" title="Local profile">PI</button>
+            <button type="button" className="top-help" aria-label="Open help and getting started" title="Help & getting started" onClick={() => setHelp(true)}><CircleHelp size={19} /></button>
           </div>
         </header>
 
