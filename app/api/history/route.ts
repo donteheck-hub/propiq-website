@@ -15,6 +15,17 @@ type HistoryResult = {
 };
 
 const TTL = 6 * 60 * 60 * 1000;
+// A trusted CSV URL can be configured for each NBA season when a published
+// free release is missing. Never expose provider credentials to the browser.
+function nbaSources(endingYear: number): { season: number; url: string; label: string }[] {
+  const override = process.env[`NBA_HISTORY_CSV_URL_${endingYear}`]?.trim();
+  const standard = `https://github.com/sportsdataverse/sportsdataverse-data/releases/download/nba_stats_player_game_logs/player_game_logs_${endingYear}.csv`;
+  return [
+    ...(override && /^https:\/\//i.test(override) ? [{ season: endingYear, url: override, label: 'Configured NBA CSV feed' }] : []),
+    { season: endingYear, url: standard, label: 'SportsDataverse release' }
+  ];
+}
+
 const cache: Partial<Record<Sport, { until: number; payload: HistoryResult }>> = {};
 
 function parseCSV(content: string): CsvRow[] {
@@ -132,28 +143,29 @@ async function loadHistory(sport: Sport): Promise<HistoryResult> {
   const sources = sport === 'NFL'
     ? [year, year - 1].map(season => ({
         season,
-        url: `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`
+        url: `https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`,
+        label: 'nflverse release'
       }))
-    : [year + 1, year, year - 1].map(season => ({
-        season,
-        url: `https://github.com/sportsdataverse/sportsdataverse-data/releases/download/nba_stats_player_game_logs/player_game_logs_${season}.csv`
-      }));
+    : [year + 1, year, year - 1].flatMap(nbaSources);
 
   const output: LogRow[] = [];
   const availableSeasons: number[] = [];
+  const loadedSeasons = new Set<number>();
   const diagnostics: string[] = [];
 
   for (const source of sources) {
+    if (loadedSeasons.has(source.season)) continue;
     const result = await download(source.url);
     if (!result.rows?.length) {
-      diagnostics.push(`${source.season}: ${result.status}`);
+      diagnostics.push(`${source.label} ${source.season}: ${result.status}`);
       continue;
     }
     const converted = sport === 'NFL' ? nflRows(result.rows) : nbaRows(result.rows);
-    diagnostics.push(`${source.season}: ${result.status}; ${converted.length} mapped statistics`);
+    diagnostics.push(`${source.label} ${source.season}: ${result.status}; ${converted.length} mapped statistics`);
     if (!converted.length) continue;
     for (const row of converted) output.push(row);
     availableSeasons.push(source.season);
+    loadedSeasons.add(source.season);
   }
 
   const unique = new Map<string, LogRow>();
@@ -182,7 +194,7 @@ async function loadHistory(sport: Sport): Promise<HistoryResult> {
     updatedAt: new Date().toISOString(),
     message: rows.length
       ? `Loaded ${rows.length} ${sport} player-stat observations from seasons ${availableSeasons.join(', ')}.`
-      : `Could not load compatible ${sport} CSV data from published release assets. See diagnostics; manual CSV import is still available.`,
+      : `No compatible ${sport} game logs loaded from any configured source. Check provider files and diagnostics; manual CSV import remains available.`,
     diagnostics
   };
 }
@@ -215,7 +227,7 @@ function filterHistory(payload: HistoryResult, players: string[]): HistoryResult
     rows,
     message: rows.length
       ? `Loaded ${rows.length} player-stat observations for ${names.size} requested players. ${payload.source}.`
-      : `No matching published history for ${names.size} requested players. ${payload.message}`,
+      : `No matching game logs for ${names.size} requested players. ${payload.message} ${payload.diagnostics.slice(0, 3).join('; ')}`, 
     diagnostics: payload.diagnostics.slice(0, 6)
   };
 }

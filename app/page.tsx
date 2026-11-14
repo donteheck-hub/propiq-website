@@ -53,6 +53,8 @@ export default function Home() {
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [autoLogs, setAutoLogs] = useState<LogRow[]>([]);
   const [historyStatus, setHistoryStatus] = useState('Loading historical game data...');
+  const [historyDiagnostics, setHistoryDiagnostics] = useState<string[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [status, setStatus] = useState<LiveStatus>('loading');
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
@@ -218,10 +220,14 @@ export default function Home() {
     if (historyPlayers.length === 0) {
       setAutoLogs(previous => previous.filter(r => r.sport !== sport));
       setHistoryStatus('No current sportsbook players to match with historical game logs.');
+      setHistoryDiagnostics([]);
+      setHistoryLoading(false);
       return;
     }
     const controller = new AbortController();
     setHistoryStatus(`Loading ${sport} history for ${historyPlayers.length} players...`);
+    setHistoryDiagnostics([]);
+    setHistoryLoading(true);
     const timer = setTimeout(() => controller.abort(), 45000);
     async function load() {
       try {
@@ -242,10 +248,14 @@ export default function Home() {
         if (controller.signal.aborted) return;
         setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...verifiedRows]);
         setHistoryStatus(data.message || `Loaded ${data.rows.length} historical observations.`);
+        setHistoryDiagnostics(Array.isArray(data.diagnostics) ? data.diagnostics.filter((x: unknown): x is string => typeof x === 'string').slice(0, 6) : []);
+        setHistoryLoading(false);
       } catch (error) {
         if (!controller.signal.aborted) {
           setAutoLogs(previous => previous.filter(r => r.sport !== sport));
           setHistoryStatus(error instanceof Error ? `History unavailable: ${error.message}. Previously fetched automatic ${sport} history cleared.` : 'Automatic history unavailable. Previous automatic history cleared; CSV import remains available.');
+          setHistoryDiagnostics([]);
+          setHistoryLoading(false);
         }
       } finally { clearTimeout(timer); }
     }
@@ -710,6 +720,18 @@ export default function Home() {
           </div>
 
           <p className="season-coverage">Historical filter: <strong>{seasonView === 'all' ? 'All available seasons' : seasonLabel(sport, seasonFor(sport)!)}</strong> · {seasonAvailable} matching statistic observations available. A missing result means missing coverage, not a 0% chance.</p>
+          {sportProps.length > 0 && seasonAvailable === 0 && !historyLoading && (
+            <div className="history-alert" role="alert">
+              <strong>No {seasonView === 'all' ? '' : `${seasonLabel(sport, seasonFor(sport)!)} `}{sport} game logs available for these props.</strong>
+              <p>The sportsbook lines are working. Historical player stats are a separate feed, and this season currently has no matching records. Hit rates cannot be calculated until valid game logs load.</p>
+              <p className="history-alert-reason">{historyStatus}</p>
+              {historyDiagnostics.length > 0 && <details><summary>History source diagnostics</summary><ul>{historyDiagnostics.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
+              <div className="history-alert-actions">
+                {seasonView === 'current' && <button className="btn secondary" onClick={() => setSeasonView('previous')}>Check previous season</button>}
+                <button className="btn secondary" onClick={() => file.current?.click()}><FileUp size={15}/> Import game logs</button>
+              </div>
+            </div>
+          )}
           <div className="table-card">
             <div className="scroll-table">
               <table>

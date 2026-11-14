@@ -118,3 +118,7 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 }
 @media(max-width:380px){.stat{padding:11px}.stat-top{font-size:8px}.topbar .crumb{max-width:120px}}
 @media(prefers-reduced-motion:reduce){.sidebar,.sidebar .nav,.stats-grid .stat{transition:none}}
+
+/* Historical data outage diagnostics; retain the existing PropIQ theme. */
+.history-alert{margin:12px 0 18px;padding:17px 20px;background:#24171e;border:1px solid #854254;border-radius:11px;color:#f8dbe1;font-size:12px;line-height:1.6}
+.history-alert strong{display:block;font-size:14px;color:#ffe3e8}.history-alert p{margin:6px 0 9px;color:#dec2ca}.history-alert-reason{overflow-wrap:anywhere}.history-alert details{margin:10px 0}.history-alert summary{cursor:pointer;color:#f5a5b6;font-weight:700}.history-alert ul{padding-left:21px;margin:7px 0;overflow-wrap:anywhere}.history-alert-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
