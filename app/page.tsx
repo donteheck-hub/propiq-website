@@ -6,7 +6,7 @@ import {
   Activity, ArrowDownUp, BarChart3, Bookmark, CalendarDays,
   ChevronDown, CircleHelp, Download, FileUp, Filter,
   LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles, ArrowLeftRight,
-  SlidersHorizontal, Target, TrendingUp, X
+  SlidersHorizontal, Target, TrendingUp, X, Shield
 } from 'lucide-react';
 import {
   analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, recentTrends, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
@@ -65,7 +65,7 @@ export default function Home() {
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
-  const [tab, setTab] = useState<'explore' | 'saved' | 'finder' | 'odds'>('explore');
+  const [tab, setTab] = useState<'explore' | 'saved' | 'finder' | 'odds' | 'matchups'>('explore');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [logs, setLogs] = useState<LogRow[]>([]);
@@ -83,6 +83,7 @@ export default function Home() {
   const [minHit, setMinHit] = useState(0);
   const [finderThreshold, setFinderThreshold] = useState(70);
   const [finderSample, setFinderSample] = useState<10 | 20>(10);
+  const [matchupOpponent, setMatchupOpponent] = useState('all');
   const [selected, setSelected] = useState<Prop | null>(null);
   const [opponentView, setOpponentView] = useState('all');
   const [defenseTeam, setDefenseTeam] = useState('');
@@ -456,6 +457,29 @@ export default function Home() {
 
   const selectedTrends = useMemo(() => selected && selectedStats
     ? recentTrends(selectedStats.games, selected) : null, [selected, selectedStats]);
+  // Opponents are taken only from actual historical game logs. We deliberately
+  // do not infer today's opposing team from a matchup string with no roster ID.
+  const matchupCandidates = useMemo(() => {
+    const seen = new Set<string>();
+    return visible.filter(p => {
+      if (!p.stats.games.length) return false;
+      const key = [p.sport, normalize(p.player), p.marketKey, p.side, p.line].join('|');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [visible]);
+  const matchupOpponents = useMemo(() => [...new Set(matchupCandidates.flatMap(p =>
+    p.stats.games.map(g => gameOpponent(g)).filter((s): s is string => !!s && s !== 'Unknown')
+  ))].sort(), [matchupCandidates]);
+  const matchupCards = useMemo(() => matchupCandidates.map(p => {
+    const games = matchupOpponent === 'all' ? p.stats.games : p.stats.games.filter(g => gameOpponent(g) === matchupOpponent);
+    const hits = games.filter(g => p.side === 'Over' ? g.value > p.line : g.value < p.line).length;
+    const pushes = games.filter(g => g.value === p.line).length;
+    const average = games.length ? games.reduce((sum, g) => sum + g.value, 0) / games.length : null;
+    return { prop: p, games: games.length, hits, pushes, average };
+  }).filter(x => x.games > 0).sort((a, b) => b.games - a.games || a.prop.player.localeCompare(b.prop.player)), [matchupCandidates, matchupOpponent]);
+
   const comparison = useMemo(() => compareIds.map(id => analyzed.find(p => p.id === id))
     .filter((p): p is (typeof analyzed)[number] => !!p && p.sport === sport), [compareIds, analyzed, sport]);
   const selectedSplits = useMemo(() => selected && selectedStats
@@ -595,6 +619,10 @@ export default function Home() {
           <Sparkles size={18} /> Smart Finder
         </button>
 
+        <button className={'nav ' + (tab === 'matchups' ? 'active' : '')} onClick={() => { setTab('matchups'); setMobileNavOpen(false); }}>
+          <Shield size={18} /> Matchup Center
+        </button>
+
         <button className={'nav ' + (tab === 'odds' ? 'active' : '')} onClick={() => { setTab('odds'); setMobileNavOpen(false); }}>
           <ArrowLeftRight size={18} /> Odds Comparison
         </button>
@@ -620,7 +648,7 @@ export default function Home() {
             <button className="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={21} /></button>
           <div className="crumb">
             Workspace <span>/</span>{' '}
-            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : 'Saved Props'}
+            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'matchups' ? 'Matchup Center' : 'Saved Props'}
           </div>
           </div>
 
@@ -645,7 +673,7 @@ export default function Home() {
               </div>
 
               <h1>
-                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : 'Your Watchlist'}
+                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'matchups' ? 'Matchup Center' : 'Your Watchlist'}
               </h1>
 
               <p>
@@ -752,14 +780,14 @@ export default function Home() {
           <div className="section-title premium-section-title">
             <div>
               <div className="eyebrow">RESEARCH DESK</div>
-              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : tab === 'odds' ? 'Compare sportsbook prices' : 'Explore player props'}</h2>
+              <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : tab === 'odds' ? 'Compare sportsbook prices' : tab === 'matchups' ? 'Opponent matchup research' : 'Explore player props'}</h2>
               <p>
-                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : tab === 'odds' ? 'Compare the exact same live player prop across DraftKings and FanDuel. Better prices increase potential payout, not the chance of winning.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
+                {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : tab === 'odds' ? 'Compare the exact same live player prop across DraftKings and FanDuel. Better prices increase potential payout, not the chance of winning.' : tab === 'matchups' ? 'Compare recorded player results against an opponent. Select a team using historical game logs; no projected matchup is assumed.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
               </p>
             </div>
 
             <span className="results">
-              {tab === 'odds' ? oddsComparisons.length : visible.length} results
+              {tab === 'odds' ? oddsComparisons.length : tab === 'matchups' ? matchupCards.length : visible.length} results
             </span>
           </div>
 
@@ -882,7 +910,47 @@ export default function Home() {
               </div>
             </div>
           )}
-          {tab === 'odds' ? (
+          {tab === 'matchups' ? (
+            <section className="matchup-center" aria-label="Player matchup research">
+              <div className="matchup-center-controls">
+                <div>
+                  <h3><Shield size={19}/> Matchup Intelligence</h3>
+                  <p>Choose an opponent from recorded game logs. The displayed percentages describe past games only; opponent sample sizes can be small.</p>
+                </div>
+                <label>Recorded opponent
+                  <select value={matchupOpponents.includes(matchupOpponent) ? matchupOpponent : 'all'}
+                    onChange={e => setMatchupOpponent(e.target.value)}>
+                    <option value="all">All recorded opponents</option>
+                    {matchupOpponents.map(team => <option key={team} value={team}>{team}</option>)}
+                  </select>
+                </label>
+              </div>
+              {matchupCards.length ? (
+                <div className="matchup-center-grid">
+                  {matchupCards.slice(0, 80).map(({prop, games, hits, pushes, average}) => (
+                    <article className="matchup-center-card" key={prop.id}>
+                      <div className="matchup-center-person">
+                        <PlayerAvatar name={prop.player} {...playerHeadshots.get(`${prop.sport}|${normalize(prop.player)}`)}/>
+                        <div><strong>{prop.player}</strong><small>{prop.event}</small></div>
+                      </div>
+                      <div className="matchup-center-prop"><Pill kind={prop.side === 'Over' ? 'green' : 'purple'}>{prop.side}</Pill> {prop.line} {prop.market}</div>
+                      <div className="matchup-center-metrics">
+                        <div><small>RECORDED GAMES</small><strong>{games}</strong></div>
+                        <div><small>OBSERVED HITS</small><strong>{hits}/{games}</strong></div>
+                        <div><small>AVERAGE</small><strong>{average === null ? '—' : average.toFixed(1)}</strong></div>
+                      </div>
+                      <p>{Math.round(100 * hits / games)}% historical hit rate · {pushes} push{pushes === 1 ? '' : 'es'} · {matchupOpponent === 'all' ? 'All opponents' : `vs ${matchupOpponent}`} · {prop.bookmaker}</p>
+                      <button type="button" className="odds-view-research" onClick={() => {setSelected(prop); setOpponentView(matchupOpponent);}}>
+                        Open full matchup research
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="empty"><h3>No recorded matchups found</h3><p>Try another opponent or season. If game logs are missing, the historical feed must be restored first.</p></div>}
+              {matchupCards.length > 80 && <p className="muted smaller">Showing 80 matching props. Use search or market filters to narrow results.</p>}
+              <p className="finder-disclaimer"><ShieldCheck size={14}/> Results describe historical games, not a forecast. Current opponent is not inferred from event titles. Team defense rankings require the optional sourced CSV import.</p>
+            </section>
+          ) : tab === 'odds' ? (
             <section className="odds-compare-area" aria-label="Sportsbook odds comparison">
               <div className="odds-compare-note"><ArrowLeftRight size={18}/>
                 <span>Showing <strong>{oddsComparisons.length}</strong> exact-line matches across DraftKings and FanDuel. Both books are shown regardless of the sportsbook filter. $100 profit figures exclude the returned stake and any fees. Odds can change at any time.</span>
@@ -1057,7 +1125,7 @@ export default function Home() {
           </div>
 
           </>)}
-          {tab !== 'odds' && comparison.length > 0 && (
+          {tab !== 'odds' && tab !== 'matchups' && comparison.length > 0 && (
             <section className="comparison-panel" aria-label="Selected prop comparison">
               <div className="comparison-head">
                 <div><h2>Compare player props ({comparison.length}/2)</h2>
