@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { logSeason, normalize, type LogRow, type Sport } from '../../../lib/props';
+import { logSeason, normalize, validLogDate, type LogRow, type Sport } from '../../../lib/props';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -77,7 +77,7 @@ function pushStat(
   output: LogRow[], sport: Sport, player: string, marketKey: string,
   date: string, value: number | null, opponent: string, venue?: 'home' | 'away'
 ) {
-  if (value === null || !player || !date) return;
+  if (value === null || value < 0 || !player.trim() || !validLogDate(date)) return;
   output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue });
 }
 
@@ -87,7 +87,7 @@ function nbaRows(input: CsvRow[]): LogRow[] {
     const player = row.player_name || row.player_display_name || row.player ||
       [row.first_name, row.family_name].filter(Boolean).join(' ');
     const date = (row.game_date || row.date || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    if (!validLogDate(date)) continue;
     const opponent = row.matchup || row.opponent || '';
     const venue: 'home' | 'away' | undefined = /\s@\s/.test(opponent) ? 'away' : /\s(?:vs\.?|v\.)\s/i.test(opponent) ? 'home' : undefined;
     const pts = numeric(row.pts);
@@ -111,7 +111,7 @@ function nflRows(input: CsvRow[]): LogRow[] {
     const player = row.player_display_name || row.player_name || '';
     const season = numeric(row.season);
     const week = numeric(row.week);
-    if (season === null || week === null || week < 1 || week > 22) continue;
+    if (season === null || week === null || !Number.isInteger(season) || !Number.isInteger(week) || week < 1 || week > 22) continue;
     // Weekly data does not supply a calendar date. An explicitly labelled
     // YYYY-Www key retains correct chronological sorting without inventing one.
     const date = `${season}-W${String(week).padStart(2, '0')}`;
@@ -231,9 +231,10 @@ export async function POST(request: NextRequest) {
     const body: unknown = await request.json();
     if (!body || typeof body !== 'object') return NextResponse.json({ message: 'Invalid JSON' }, { status: 400 });
     const input = body as { sport?: string; players?: unknown };
-    const sport: Sport = input.sport === 'NFL' ? 'NFL' : 'NBA';
+    if (input.sport !== 'NBA' && input.sport !== 'NFL') return NextResponse.json({ message: 'sport must be NBA or NFL' }, { status: 400 });
+    const sport: Sport = input.sport;
     if (!Array.isArray(input.players) || input.players.length > 120 ||
-        input.players.some(p => typeof p !== 'string' || p.length > 100)) {
+        input.players.some(p => typeof p !== 'string' || p.length > 100 || !p.trim())) {
       return NextResponse.json({ message: 'Provide 1-120 valid player names' }, { status: 400 });
     }
     const players = [...new Set(input.players as string[])];

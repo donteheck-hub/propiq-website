@@ -6,6 +6,19 @@ export const MARKETS: Record<Sport, Record<string, string>> = {
   NFL: { player_pass_yds: 'Passing Yards', player_rush_yds: 'Rushing Yards', player_reception_yds: 'Receiving Yards', player_receptions: 'Receptions', player_pass_tds: 'Passing TDs', player_rush_attempts: 'Rushing Attempts', player_pass_completions: 'Completions' }
 };
 export const normalize = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+// ISO calendar dates and NFL week identifiers; reject impossible dates rather than
+// silently accepting malformed imports as valid game history.
+export function validLogDate(date: string): boolean {
+  const week = /^(\d{4})-W(\d{2})$/.exec(date);
+  if (week) return Number(week[2]) >= 1 && Number(week[2]) <= 22;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!match) return false;
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
 // NBA seasons begin in October; NFL weekly observations carry their season year.
 // An imported NBA date before October belongs to the season starting the previous year.
 export function logSeason(row: Pick<LogRow, 'sport' | 'date'>): number | null {
@@ -52,7 +65,7 @@ export function splitHistory(prop: Prop, games: LogRow[]) {
 }
 export type HitRate = { hits: number; total: number; pushes: number; pct: number; complete: boolean };
 export function analyze(prop: Prop, logs: LogRow[], season?: number) {
-  const games = logs.filter(x => x.sport === prop.sport && normalize(x.player) === normalize(prop.player) && x.marketKey === prop.marketKey && Number.isFinite(x.value) && (season === undefined || logSeason(x) === season)).sort((a, b) => b.date.localeCompare(a.date));
+  const games = logs.filter(x => x.sport === prop.sport && normalize(x.player) === normalize(prop.player) && x.marketKey === prop.marketKey && Number.isFinite(x.value) && x.value >= 0 && validLogDate(x.date) && (season === undefined || logSeason(x) === season)).sort((a, b) => b.date.localeCompare(a.date));
   const hit = (n: number): HitRate | null => {
     const batch = games.slice(0, n);
     if (!batch.length) return null;
@@ -89,14 +102,14 @@ export function recentTrends(games: LogRow[], prop: Prop) {
   return { recentAverage, previousAverage, averageChange: recentAverage !== null && previousAverage !== null && last5.length === 5 && previous5.length === 5 ? recentAverage - previousAverage : null,
     median, range, currentStreak, sample: recent.length };
 }
-export function implied(odds: number) { return odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100); }
+export function implied(odds: number) { if (!Number.isFinite(odds) || odds === 0) return NaN; return odds < 0 ? Math.abs(odds) / (Math.abs(odds) + 100) : 100 / (odds + 100); }
 export function parseCsv(content: string): LogRow[] {
   const lines = content.trim().split(/\r?\n/).filter(Boolean); if (lines.length < 2) return [];
   const split = (s: string) => { const out: string[] = []; let q = false, c = ''; for (let i = 0; i < s.length; i++) { if (s[i] === '"') { if (q && s[i + 1] === '"') { c += '"'; i++; } else q = !q; } else if (s[i] === ',' && !q) { out.push(c.trim()); c = ''; } else c += s[i]; } out.push(c.trim()); return out; };
   const headers = split(lines[0]).map(x => x.replace(/^\ufeff/, '').toLowerCase());
   const required = ['sport', 'player', 'marketkey', 'date', 'value'];
   if (required.some(k => !headers.includes(k))) throw Error('CSV needs columns: sport,player,marketKey,date,value (optional: opponent)');
-  return lines.slice(1).map(line => { const cells = split(line), get = (k: string) => { const i = headers.indexOf(k); return i < 0 ? '' : cells[i] ?? ''; }; return { sport: get('sport').toUpperCase() as Sport, player: get('player'), marketKey: get('marketkey'), date: get('date'), value: Number(get('value')), opponent: get('opponent'), venue: (['home', 'h'].includes(get('venue').toLowerCase()) ? 'home' : ['away', 'a'].includes(get('venue').toLowerCase()) ? 'away' : undefined) as 'home' | 'away' | undefined }; }).filter(r => (r.sport === 'NBA' || r.sport === 'NFL') && !!r.player && !!r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && !!MARKETS[r.sport][r.marketKey]);
+  return lines.slice(1).map(line => { const cells = split(line), get = (k: string) => { const i = headers.indexOf(k); return i < 0 ? '' : cells[i] ?? ''; }; return { sport: get('sport').toUpperCase() as Sport, player: get('player'), marketKey: get('marketkey'), date: get('date'), value: get('value').trim() === '' ? NaN : Number(get('value')), opponent: get('opponent'), venue: (['home', 'h'].includes(get('venue').toLowerCase()) ? 'home' : ['away', 'a'].includes(get('venue').toLowerCase()) ? 'away' : undefined) as 'home' | 'away' | undefined }; }).filter(r => (r.sport === 'NBA' || r.sport === 'NFL') && !!r.player && !!r.date && validLogDate(r.date) && Number.isFinite(r.value) && r.value >= 0 && !!MARKETS[r.sport][r.marketKey]);
 }
 
 

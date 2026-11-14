@@ -15,6 +15,7 @@ import {
 const STORAGE_KEY = 'prop-iq-v2';
 const PAGE_SIZE = 40;
 const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
+const MAX_CSV_BYTES = 5 * 1024 * 1024;
 const MIN_SAMPLE_FOR_HIGHLIGHT = 10;
 
 function Pill({
@@ -212,7 +213,12 @@ export default function Home() {
   const historyPlayerKey = historyPlayers.join('|');
 
   useEffect(() => {
-    if (!hydrated || historyPlayers.length === 0) return;
+    if (!hydrated) return;
+    if (historyPlayers.length === 0) {
+      setAutoLogs(previous => previous.filter(r => r.sport !== sport));
+      setHistoryStatus('No current sportsbook players to match with historical game logs.');
+      return;
+    }
     const controller = new AbortController();
     setHistoryStatus(`Loading ${sport} history for ${historyPlayers.length} players...`);
     const timer = setTimeout(() => controller.abort(), 45000);
@@ -231,13 +237,15 @@ export default function Home() {
         if (text.length > MAX_HISTORY_BYTES) throw new Error('Filtered history still exceeds the response limit.');
         const data = JSON.parse(text);
         if (!Array.isArray(data.rows)) throw new Error('Invalid history response');
+        const verifiedRows = (data.rows as LogRow[]).filter(r => r && r.sport === sport && typeof r.player === 'string' && typeof r.marketKey === 'string' && typeof r.date === 'string' && typeof r.value === 'number' && Number.isFinite(r.value) && r.value >= 0 && MARKETS[sport][r.marketKey]);
         if (controller.signal.aborted) return;
-        setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...(data.rows as LogRow[])]);
+        setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...verifiedRows]);
         setHistoryStatus(data.message || `Loaded ${data.rows.length} historical observations.`);
       } catch (error) {
-        if (!controller.signal.aborted) setHistoryStatus(
-          error instanceof Error ? `History unavailable: ${error.message}` : 'Automatic history unavailable. CSV import remains available.'
-        );
+        if (!controller.signal.aborted) {
+          setAutoLogs(previous => previous.filter(r => r.sport !== sport));
+          setHistoryStatus(error instanceof Error ? `History unavailable: ${error.message}. Previously fetched automatic ${sport} history cleared.` : 'Automatic history unavailable. Previous automatic history cleared; CSV import remains available.');
+        }
       } finally { clearTimeout(timer); }
     }
     void load();
@@ -348,6 +356,7 @@ export default function Home() {
 
 
   function importDefenseFile(f: File) {
+    if (f.size > MAX_CSV_BYTES) { setDefenseError('CSV exceeds the 5 MB import limit.'); return; }
     setDefenseError('');
     if (f.size > 1024 * 1024) { setDefenseError('CSV must be under 1 MB.'); return; }
     void f.text().then(content => {
@@ -361,6 +370,7 @@ export default function Home() {
   }
 
   function importFile(f: File) {
+    if (f.size > MAX_CSV_BYTES) { setImportError('CSV exceeds the 5 MB import limit.'); return; }
     setImportError('');
 
     f.text().then(text => {

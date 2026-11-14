@@ -24,24 +24,32 @@ async function load(sport: Sport, key: string): Promise<Payload> {
   const base = `https://api.the-odds-api.com/v4/sports/${sportKeys[sport]}`;
   const events = await fetchJSON(`${base}/events?apiKey=${encodeURIComponent(key)}&dateFormat=iso`) as { id: string; home_team: string; away_team: string; commence_time: string }[];
   if (!Array.isArray(events)) throw Error('Provider returned invalid event data');
-  const upcoming = events.filter(e => Number.isFinite(Date.parse(e.commence_time)) && Date.parse(e.commence_time) > Date.now()).sort((a, b) => a.commence_time.localeCompare(b.commence_time));
+  const upcoming = events.filter(e => e && typeof e.id === 'string' && typeof e.commence_time === 'string' && typeof e.home_team === 'string' && typeof e.away_team === 'string' && Number.isFinite(Date.parse(e.commence_time)) && Date.parse(e.commence_time) > Date.now()).sort((a, b) => a.commence_time.localeCompare(b.commence_time));
   const selected = upcoming.slice(0, eventLimit());
   const markets = Object.keys(MARKETS[sport]).join(',');
   const props: Prop[] = [];
   const warnings: string[] = [];
+  const seen = new Set<string>();
   let checked = 0;
   for (const event of selected) {
     try {
       const url = `${base}/events/${encodeURIComponent(event.id)}/odds?apiKey=${encodeURIComponent(key)}&bookmakers=draftkings,fanduel&markets=${markets}&oddsFormat=american`;
       const data = await fetchJSON(url) as { bookmakers?: { key: string; title: string; markets?: { key: string; outcomes?: { name: string; description?: string; point?: number; price: number }[] }[] }[] };
-      checked++;
-      for (const book of data.bookmakers ?? []) for (const m of book.markets ?? []) {
+      if (data.bookmakers !== undefined && !Array.isArray(data.bookmakers)) throw Error('Provider returned malformed bookmaker data');
+      for (const book of data.bookmakers ?? []) {
+        if (!book || !['draftkings', 'fanduel'].includes(book.key) || !Array.isArray(book.markets)) continue;
+        for (const m of book.markets) {
         if (!MARKETS[sport][m.key]) continue;
-        for (const outcome of m.outcomes ?? []) {
-          if ((outcome.name !== 'Over' && outcome.name !== 'Under') || !outcome.description || !Number.isFinite(outcome.point) || !Number.isFinite(outcome.price)) continue;
-          props.push({ id: [sport, event.id, book.key, m.key, outcome.description, outcome.name, outcome.point].join(':'), sport, player: outcome.description, market: MARKETS[sport][m.key], marketKey: m.key, line: outcome.point!, side: outcome.name, odds: outcome.price, bookmaker: book.title, event: `${event.away_team} @ ${event.home_team}`, commence: event.commence_time, source: 'live' });
+        for (const outcome of Array.isArray(m.outcomes) ? m.outcomes : []) {
+          if ((outcome.name !== 'Over' && outcome.name !== 'Under') || !outcome.description || !Number.isFinite(outcome.point) || !Number.isFinite(outcome.price) || outcome.price === 0 || outcome.point! < 0) continue;
+          const id = [sport, event.id, book.key, m.key, outcome.description, outcome.name, outcome.point].join(':');
+          if (seen.has(id)) continue;
+          seen.add(id);
+          props.push({ id, sport, player: outcome.description, market: MARKETS[sport][m.key], marketKey: m.key, line: outcome.point!, side: outcome.name, odds: outcome.price, bookmaker: book.title, event: `${event.away_team} @ ${event.home_team}`, commence: event.commence_time, source: 'live' });
+        }
         }
       }
+      checked++;
     } catch (error) {
       // One unsupported event should not hide successful lines from other games.
       warnings.push(`${event.away_team} @ ${event.home_team}: ${error instanceof Error ? error.message : 'Unknown error'}`);
