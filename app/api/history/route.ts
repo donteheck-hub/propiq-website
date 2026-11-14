@@ -86,10 +86,10 @@ function numeric(value: string | undefined): number | null {
 
 function pushStat(
   output: LogRow[], sport: Sport, player: string, marketKey: string,
-  date: string, value: number | null, opponent: string, venue?: 'home' | 'away', nbaPlayerId?: number
+  date: string, value: number | null, opponent: string, venue?: 'home' | 'away', nbaPlayerId?: number, nflHeadshotUrl?: string
 ) {
   if (value === null || value < 0 || !player.trim() || !validLogDate(date)) return;
-  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue, ...(nbaPlayerId ? { nbaPlayerId } : {}) });
+  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue, ...(nbaPlayerId ? { nbaPlayerId } : {}), ...(nflHeadshotUrl ? { nflHeadshotUrl } : {}) });
 }
 
 function nbaRows(input: CsvRow[]): LogRow[] {
@@ -119,6 +119,20 @@ function nbaRows(input: CsvRow[]): LogRow[] {
   return output;
 }
 
+// Only accept image hosts used by NFL/nflverse statistical datasets; never
+// render arbitrary URLs supplied by a CSV file as external browser content.
+function verifiedNflHeadshot(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value.trim());
+    const hostname = url.hostname.toLowerCase();
+    const trusted = hostname === 'static.www.nfl.com' || hostname === 'static.clubs.nfl.com' ||
+      hostname === 'static.nfl.com' || hostname === 'a.espncdn.com' || hostname === 'cdn.espn.com' ||
+      hostname.endsWith('.nfl.com') || hostname.endsWith('.espncdn.com');
+    return url.protocol === 'https:' && trusted ? url.toString() : undefined;
+  } catch { return undefined; }
+}
+
 function nflRows(input: CsvRow[]): LogRow[] {
   const output: LogRow[] = [];
   for (const row of input) {
@@ -130,13 +144,14 @@ function nflRows(input: CsvRow[]): LogRow[] {
     // YYYY-Www key retains correct chronological sorting without inventing one.
     const date = `${season}-W${String(week).padStart(2, '0')}`;
     const opponent = row.opponent_team || '';
-    pushStat(output, 'NFL', player, 'player_pass_yds', date, numeric(row.passing_yards), opponent);
-    pushStat(output, 'NFL', player, 'player_rush_yds', date, numeric(row.rushing_yards), opponent);
-    pushStat(output, 'NFL', player, 'player_reception_yds', date, numeric(row.receiving_yards), opponent);
-    pushStat(output, 'NFL', player, 'player_receptions', date, numeric(row.receptions), opponent);
-    pushStat(output, 'NFL', player, 'player_pass_tds', date, numeric(row.passing_tds), opponent);
-    pushStat(output, 'NFL', player, 'player_rush_attempts', date, numeric(row.carries ?? row.rushing_attempts), opponent);
-    pushStat(output, 'NFL', player, 'player_pass_completions', date, numeric(row.completions), opponent);
+    const headshot = verifiedNflHeadshot(row.headshot_url);
+    pushStat(output, 'NFL', player, 'player_pass_yds', date, numeric(row.passing_yards), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_rush_yds', date, numeric(row.rushing_yards), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_reception_yds', date, numeric(row.receiving_yards), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_receptions', date, numeric(row.receptions), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_pass_tds', date, numeric(row.passing_tds), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_rush_attempts', date, numeric(row.carries ?? row.rushing_attempts), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_pass_completions', date, numeric(row.completions), opponent, undefined, undefined, headshot);
   }
   return output;
 }

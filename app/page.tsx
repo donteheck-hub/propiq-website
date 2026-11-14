@@ -46,14 +46,15 @@ const normalizeBook = (name: string) =>
 
 // Images are optional enhancements: if the historical provider does not supply a
 // verified NBA person ID, or the CDN has no photo, use an initials avatar.
-function PlayerAvatar({ name, nbaPlayerId, size = 'table' }: { name: string; nbaPlayerId?: number; size?: 'table' | 'large' }) {
+function PlayerAvatar({ name, nbaPlayerId, nflHeadshotUrl, size = 'table' }: { name: string; nbaPlayerId?: number; nflHeadshotUrl?: string; size?: 'table' | 'large' }) {
   const [failed, setFailed] = useState(false);
   const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || 'PI';
-  const showPhoto = Number.isSafeInteger(nbaPlayerId) && !!nbaPlayerId && !failed;
+  const imageUrl = nflHeadshotUrl || (Number.isSafeInteger(nbaPlayerId) && nbaPlayerId ? `https://cdn.nba.com/headshots/nba/latest/260x190/${nbaPlayerId}.png` : undefined);
+  const showPhoto = !!imageUrl && !failed;
   return (
     <span className={'player-avatar ' + (size === 'large' ? 'avatar-large' : '')} aria-hidden="true">
       {showPhoto ? (
-        <img src={`https://cdn.nba.com/headshots/nba/latest/260x190/${nbaPlayerId}.png`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        <img src={imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
       ) : <span>{initials}</span>}
     </span>
   );
@@ -334,13 +335,16 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, sport, historyPlayerKey, seasonView]);
 
-  // Derive photos exclusively from identifiers accompanying matched NBA game logs.
+  // Use only provider-supplied player identifiers or verified NFL photo links.
   const playerHeadshots = useMemo(() => {
-    const ids = new Map<string, number>();
+    const ids = new Map<string, { nbaPlayerId?: number; nflHeadshotUrl?: string }>();
     for (const row of [...autoLogs, ...logs]) {
       if (row.sport === 'NBA' && Number.isSafeInteger(row.nbaPlayerId) &&
           (row.nbaPlayerId ?? 0) >= 1000 && (row.nbaPlayerId ?? 0) < 100000000) {
-        ids.set(normalize(row.player), row.nbaPlayerId!);
+        ids.set(`NBA|${normalize(row.player)}`, { nbaPlayerId: row.nbaPlayerId });
+      }
+      if (row.sport === 'NFL' && row.nflHeadshotUrl && /^https:\/\//.test(row.nflHeadshotUrl)) {
+        ids.set(`NFL|${normalize(row.player)}`, { nflHeadshotUrl: row.nflHeadshotUrl });
       }
     }
     return ids;
@@ -889,7 +893,7 @@ export default function Home() {
                   {oddsComparisons.slice(0, 100).map(({ best, other, gain }) => (
                     <article className="odds-compare-card" key={best.id + other.id}>
                       <div className="odds-compare-player">
-                        <PlayerAvatar name={best.player} nbaPlayerId={best.sport === 'NBA' ? playerHeadshots.get(normalize(best.player)) : undefined}/>
+                        <PlayerAvatar name={best.player} {...playerHeadshots.get(`${best.sport}|${normalize(best.player)}`)}/>
                         <div><strong>{best.player}</strong><small>{best.event}</small></div>
                       </div>
                       <div className="odds-compare-line"><Pill kind={best.side === 'Over' ? 'green' : 'purple'}>{best.side}</Pill> {best.line} {best.market}</div>
@@ -940,7 +944,7 @@ export default function Home() {
                     >
                       <td>
                         <div className="player-identity">
-                          <PlayerAvatar name={p.player} nbaPlayerId={p.sport === 'NBA' ? playerHeadshots.get(normalize(p.player)) : undefined} />
+                          <PlayerAvatar name={p.player} {...playerHeadshots.get(`${p.sport}|${normalize(p.player)}`)} />
                           <div className="player-identity-text">
                             <div className="player-name">{p.player}</div>
                             <div className="muted smaller">{p.event}</div>
@@ -1042,12 +1046,12 @@ export default function Home() {
               <div className="empty">
                 <Search size={28} />
                 <h3>
-                  {loading ? 'Loading player props...' : tab === 'finder' ? 'No qualifying trends' : 'No props found'}
+                  {loading ? 'Loading player props...' : tab === 'finder' ? 'No qualifying trends' : sportProps.length === 0 ? `No ${sport} sportsbook props available` : 'No props match these filters'}
                 </h3>
                 <p>
                   {loading
                     ? 'Checking available sportsbook lines.'
-                    : tab === 'finder' ? 'Try a lower hit-rate threshold, a different season, or Last 10. Missing history is not a missed bet.' : 'Try another filter, add a manual prop, or refresh the live odds.'}
+                    : tab === 'finder' ? 'Try a lower hit-rate threshold, a different season, or Last 10. Missing history is not a missed bet.' : sportProps.length === 0 ? (notice || 'Sportsbooks may not have posted these player markets yet. Try refreshing nearer to kickoff; provider errors appear above.') : 'Try another filter, reset filters, or refresh live odds.'}
                 </p>
               </div>
             )}
@@ -1133,7 +1137,7 @@ export default function Home() {
           >
             <div className="drawer-head">
               <div className="drawer-player-identity">
-                <PlayerAvatar name={selected.player} size="large" nbaPlayerId={selected.sport === 'NBA' ? playerHeadshots.get(normalize(selected.player)) : undefined} />
+                <PlayerAvatar name={selected.player} size="large" {...playerHeadshots.get(`${selected.sport}|${normalize(selected.player)}`)} />
                 <div>
                   <span className="eyebrow">PLAYER RESEARCH</span>
                   <h2>{selected.player}</h2>
