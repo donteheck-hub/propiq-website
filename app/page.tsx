@@ -215,6 +215,8 @@ export default function Home() {
   )).sort(), [props, sport]);
   const historyPlayerKey = historyPlayers.join('|');
 
+  // Request a small set of players at a time. A single full-roster response can
+  // exceed the 5 MB browser safety limit even when the server has valid history.
   useEffect(() => {
     if (!hydrated) return;
     if (historyPlayers.length === 0) {
@@ -225,45 +227,93 @@ export default function Home() {
       return;
     }
     const controller = new AbortController();
-    setHistoryStatus(`Loading ${sport} history for ${historyPlayers.length} players...`);
+    const selectedSeason = seasonView === 'all' ? 'all' :
+      currentSeason(sport) - (seasonView === 'previous' ? 1 : 0);
+    const batchSize = 8;
+    const playerBatches: string[][] = [];
+    for (let i = 0; i < historyPlayers.length; i += batchSize) {
+      playerBatches.push(historyPlayers.slice(i, i + batchSize));
+    }
+    setHistoryStatus(`Loading ${sport} history for ${historyPlayers.length} players in ${playerBatches.length} smaller requests...`);
     setHistoryDiagnostics([]);
     setHistoryLoading(true);
-    const timer = setTimeout(() => controller.abort(), 45000);
+    const timer = setTimeout(() => controller.abort(), 120000);
+
     async function load() {
+      const combined: LogRow[] = [];
+      const diagnostics = new Set<string>();
+      const failures: string[] = [];
+      let completed = 0;
+      let nextBatch = 0;
       try {
-        const response = await fetch('/api/history', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sport, players: historyPlayers.slice(0, 120) }),
-          cache: 'no-store', signal: controller.signal
-        });
-        if (!response.ok) throw new Error(`History API returned ${response.status}`);
-        const size = Number(response.headers.get('content-length') || 0);
-        if (size > MAX_HISTORY_BYTES) throw new Error('Filtered history still exceeds the response limit.');
-        const text = await response.text();
-        if (text.length > MAX_HISTORY_BYTES) throw new Error('Filtered history still exceeds the response limit.');
-        const data = JSON.parse(text);
-        if (!Array.isArray(data.rows)) throw new Error('Invalid history response');
-        const verifiedRows = (data.rows as LogRow[]).filter(r => r && r.sport === sport && typeof r.player === 'string' && typeof r.marketKey === 'string' && typeof r.date === 'string' && typeof r.value === 'number' && Number.isFinite(r.value) && r.value >= 0 && MARKETS[sport][r.marketKey]);
+        async function worker() {
+          while (nextBatch < playerBatches.length && !controller.signal.aborted) {
+            const index = nextBatch++;
+            try {
+              const response = await fetch('/api/history', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sport, players: playerBatches[index], season: selectedSeason }),
+                cache: 'no-store',
+                signal: controller.signal
+              });
+              if (!response.ok) {
+                const error = await response.json().catch(() => null);
+                throw new Error(typeof error?.message === 'string' ? error.message : `History API returned ${response.status}`);
+              }
+              const size = Number(response.headers.get('content-length') || 0);
+              if (size > MAX_HISTORY_BYTES) throw new Error('A player-history batch exceeded 5 MB');
+              const text = await response.text();
+              if (text.length > MAX_HISTORY_BYTES) throw new Error('A player-history batch exceeded 5 MB');
+              const data = JSON.parse(text);
+              if (!Array.isArray(data.rows)) throw new Error('Invalid history response');
+              combined.push(...(data.rows as LogRow[]).filter(r =>
+                r && r.sport === sport && typeof r.player === 'string' &&
+                typeof r.marketKey === 'string' && typeof r.date === 'string' &&
+                typeof r.value === 'number' && Number.isFinite(r.value) &&
+                r.value >= 0 && !!MARKETS[sport][r.marketKey]
+              ));
+              if (Array.isArray(data.diagnostics)) {
+                for (const item of data.diagnostics) if (typeof item === 'string') diagnostics.add(item);
+              }
+            } catch (error) {
+              if (controller.signal.aborted) return;
+              failures.push(`Batch ${index + 1}: ${error instanceof Error ? error.message : 'Request failed'}`);
+            }
+            completed++;
+            if (!controller.signal.aborted) {
+              setHistoryStatus(`Loading ${sport} game logs: ${completed}/${playerBatches.length} batches checked...`);
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(3, playerBatches.length) }, () => worker()));
         if (controller.signal.aborted) return;
+        const unique = new Map<string, LogRow>();
+        for (const row of combined) {
+          unique.set(`${row.sport}|${normalize(row.player)}|${row.marketKey}|${row.date}`, row);
+        }
+        const verifiedRows = [...unique.values()];
         setAutoLogs(previous => [...previous.filter(r => r.sport !== sport), ...verifiedRows]);
-        setHistoryStatus(data.message || `Loaded ${data.rows.length} historical observations.`);
-        setHistoryDiagnostics(Array.isArray(data.diagnostics) ? data.diagnostics.filter((x: unknown): x is string => typeof x === 'string').slice(0, 6) : []);
-        setHistoryLoading(false);
+        const summary = `${verifiedRows.length} ${sport} historical observations loaded for ${historyPlayers.length} requested players (${completed - failures.length}/${playerBatches.length} batches succeeded).`;
+        setHistoryStatus(failures.length ? `${summary} Some requests failed; see diagnostics.` :
+          verifiedRows.length ? summary : `${summary} The data source may not have matching games for this season; see diagnostics.`);
+        setHistoryDiagnostics([...failures, ...diagnostics].slice(0, 12));
       } catch (error) {
         if (!controller.signal.aborted) {
           setAutoLogs(previous => previous.filter(r => r.sport !== sport));
-          setHistoryStatus(error instanceof Error ? `History unavailable: ${error.message}. Previously fetched automatic ${sport} history cleared.` : 'Automatic history unavailable. Previous automatic history cleared; CSV import remains available.');
-          setHistoryDiagnostics([]);
-          setHistoryLoading(false);
+          setHistoryStatus(`History unavailable: ${error instanceof Error ? error.message : 'Unknown error'}.`);
+          setHistoryDiagnostics([...failures, ...diagnostics].slice(0, 12));
         }
-      } finally { clearTimeout(timer); }
+      } finally {
+        clearTimeout(timer);
+        if (!controller.signal.aborted) setHistoryLoading(false);
+      }
     }
     void load();
     return () => { controller.abort(); clearTimeout(timer); };
-  // Players are sorted, so this key changes only when the available set changes.
+  // The player key is sorted and stable; season changes deliberately refetch.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, sport, historyPlayerKey]);
+  }, [hydrated, sport, historyPlayerKey, seasonView]);
 
   const allLogs = useMemo(() => {
     const map = new Map<string, LogRow>();

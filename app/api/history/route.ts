@@ -219,9 +219,9 @@ async function getHistory(sport: Sport): Promise<HistoryResult> {
   finally { delete inflight[sport]; }
 }
 
-function filterHistory(payload: HistoryResult, players: string[]): HistoryResult {
+function filterHistory(payload: HistoryResult, players: string[], season: number | 'all'): HistoryResult {
   const names = new Set(players.map(p => normalize(p.trim())).filter(Boolean));
-  const rows = payload.rows.filter(row => names.has(normalize(row.player.trim())));
+  const rows = payload.rows.filter(row => names.has(normalize(row.player.trim())) && (season === 'all' || logSeason(row) === season));
   return {
     ...payload,
     rows,
@@ -242,17 +242,22 @@ export async function POST(request: NextRequest) {
   try {
     const body: unknown = await request.json();
     if (!body || typeof body !== 'object') return NextResponse.json({ message: 'Invalid JSON' }, { status: 400 });
-    const input = body as { sport?: string; players?: unknown };
+    const input = body as { sport?: string; players?: unknown; season?: unknown };
     if (input.sport !== 'NBA' && input.sport !== 'NFL') return NextResponse.json({ message: 'sport must be NBA or NFL' }, { status: 400 });
     const sport: Sport = input.sport;
     if (!Array.isArray(input.players) || input.players.length > 120 ||
         input.players.some(p => typeof p !== 'string' || p.length > 100 || !p.trim())) {
       return NextResponse.json({ message: 'Provide 1-120 valid player names' }, { status: 400 });
     }
+    // The client requests one selected season by default, avoiding massive
+    // all-season payloads that can exceed its 5 MB response safety limit.
+    const season: number | 'all' = input.season === 'all' ? 'all' :
+      typeof input.season === 'number' && Number.isInteger(input.season) && input.season >= 2000 && input.season <= 2100
+        ? input.season : 'all';
     const players = [...new Set(input.players as string[])];
     if (!players.length) return NextResponse.json({ rows: [], message: 'No players requested' });
     const history = await getHistory(sport);
-    return NextResponse.json(filterHistory(history, players), {
+    return NextResponse.json(filterHistory(history, players, season), {
       headers: { 'Cache-Control': 'private, no-store' }
     });
   } catch (error) {
