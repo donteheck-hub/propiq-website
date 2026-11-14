@@ -35,7 +35,7 @@ function fmtOdds(n: number) {
   return n > 0 ? `+${n}` : `${n}`;
 }
 
-type LiveStatus = 'loading' | 'live' | 'unavailable';
+type LiveStatus = 'loading' | 'live' | 'cached' | 'stale' | 'unavailable';
 type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
 type SortField = 'last5' | 'last10' | 'average';
 
@@ -191,15 +191,13 @@ export default function Home() {
         ...liveProps
       ]);
 
-      setStatus('live');
+      setStatus(data.stale ? 'stale' : data.cached ? 'cached' : 'live');
       setOddsCoverage(typeof data.availableEvents === 'number' ? `Odds coverage: ${data.eventsChecked} of ${data.availableEvents} upcoming games checked. ${Array.isArray(data.warnings) && data.warnings.length ? `${data.warnings.length} provider error(s).` : ''}` : '');
-      setLastUpdated(new Date().toLocaleTimeString());
+      setLastUpdated(data.updatedAt ? new Date(data.updatedAt).toLocaleString() : new Date().toLocaleTimeString());
 
       setNotice(
         data.message ||
-        `${liveProps.length} live ${selectedSport} props loaded. ${
-          data.notice || ''
-        }`
+        `${liveProps.length} ${data.stale ? 'outdated' : 'available'} ${selectedSport} props. ${data.notice || ''} ${data.creditStatus ? `Local daily quota estimate: ${data.creditStatus.usedToday}/${data.creditStatus.dailyBudget} credits. ${data.creditStatus.providerRemaining == null ? '' : `Provider reports ${data.creditStatus.providerRemaining} remaining.`}` : ''}`
       );
     } catch (error) {
       if (currentRequest !== requestId.current) return;
@@ -630,8 +628,9 @@ export default function Home() {
             <Pill kind={status === 'live' ? 'green' : 'amber'}>
               {loading
                 ? 'LOADING ODDS'
-                : status === 'live'
-                  ? 'LIVE ODDS'
+                : status === 'live' ? 'UPDATED ODDS'
+                  : status === 'cached' ? 'CACHED ODDS'
+                  : status === 'stale' ? 'STALE ODDS'
                   : 'ODDS UNAVAILABLE'}
             </Pill>
             <button type="button" className="top-help" aria-label="Open help and getting started" title="Help & getting started" onClick={() => setHelp(true)}><CircleHelp size={19} /></button>
@@ -668,7 +667,7 @@ export default function Home() {
                   className={loading ? 'spin' : ''}
                   size={16}
                 />
-                {loading ? 'Checking...' : 'Refresh Live Odds'}
+                {loading ? 'Checking...' : 'Check Cached Odds'}
               </button>
             </div>
           </div>
@@ -741,7 +740,7 @@ export default function Home() {
 
           {lastUpdated && (
             <p className="muted smaller">
-              Last successful odds check: {lastUpdated}
+              Odds data timestamp: {lastUpdated}
             </p>
           )}
 
