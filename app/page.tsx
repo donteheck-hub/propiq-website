@@ -9,7 +9,7 @@ import {
   SlidersHorizontal, Target, TrendingUp, X
 } from 'lucide-react';
 import {
-  analyze, implied, LogRow, MARKETS, normalize, parseCsv, Prop, Sport
+  analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
 } from '../lib/props';
 
 const STORAGE_KEY = 'prop-iq-v2';
@@ -61,6 +61,9 @@ export default function Home() {
   const [minHit, setMinHit] = useState(0);
   const [selected, setSelected] = useState<Prop | null>(null);
   const [opponentView, setOpponentView] = useState('all');
+  const [defenseTeam, setDefenseTeam] = useState('');
+  const [defenseRows, setDefenseRows] = useState<DefenseRow[]>([]);
+  const [defenseError, setDefenseError] = useState('');
   const [saved, setSaved] = useState<string[]>([]);
   const [modal, setModal] = useState(false);
   const [help, setHelp] = useState(false);
@@ -71,6 +74,7 @@ export default function Home() {
   const [page, setPage] = useState(1);
 
   const file = useRef<HTMLInputElement>(null);
+  const defenseFile = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
 
   // Restore manually entered props, imported logs, and bookmarks.
@@ -90,6 +94,7 @@ export default function Home() {
 
         if (Array.isArray(data.logs)) setLogs(data.logs);
         if (Array.isArray(data.saved)) setSaved(data.saved);
+        if (Array.isArray(data.defenseRows)) setDefenseRows(data.defenseRows.filter((r: DefenseRow) => r && (r.sport === 'NBA' || r.sport === 'NFL') && Number.isFinite(r.allowedPerGame) && Number.isInteger(r.season) && typeof r.team === 'string' && typeof r.source === 'string'));
       }
     } catch (error) {
       console.error('Unable to restore saved research:', error);
@@ -109,13 +114,14 @@ export default function Home() {
         JSON.stringify({
           props: props.filter(p => p.source === 'manual'),
           logs,
-          saved
+          saved,
+          defenseRows
         })
       );
     } catch (error) {
       console.error('Unable to save research:', error);
     }
-  }, [hydrated, props, logs, saved]);
+  }, [hydrated, props, logs, saved, defenseRows]);
 
   const refresh = useCallback(async (selectedSport: Sport) => {
     const currentRequest = ++requestId.current;
@@ -327,6 +333,27 @@ export default function Home() {
   const opponentSummary = useMemo(() => selected && selectedSplits
     ? selectedSplits.summarize(filteredOpponentGames) : null,
     [selected, selectedSplits, filteredOpponentGames]);
+  const defenseSeason = selected ? (seasonFor(selected.sport) ?? currentSeason(selected.sport)) : null;
+  const defenseTeams = useMemo(() => selected && defenseSeason !== null
+    ? defenseRows.filter(r => r.sport === selected.sport && r.season === defenseSeason && r.marketKey === selected.marketKey)
+        .map(r => r.team).sort() : [], [selected, defenseSeason, defenseRows]);
+  const activeDefenseTeam = defenseTeams.includes(defenseTeam) ? defenseTeam : '';
+  const defenseInfo = selected && defenseSeason !== null && activeDefenseTeam
+    ? defenseContext(defenseRows, selected.sport, defenseSeason, selected.marketKey, activeDefenseTeam) : null;
+
+
+  function importDefenseFile(f: File) {
+    setDefenseError('');
+    if (f.size > 1024 * 1024) { setDefenseError('CSV must be under 1 MB.'); return; }
+    void f.text().then(content => {
+      const rows = parseDefenseCsv(content);
+      setDefenseRows(previous => {
+        const incoming = new Set(rows.map(r => `${r.sport}|${r.season}|${r.marketKey}|${normalize(r.team)}`));
+        return [...previous.filter(r => !incoming.has(`${r.sport}|${r.season}|${r.marketKey}|${normalize(r.team)}`)), ...rows];
+      });
+      setNotice(`Imported ${rows.length} source-labeled defensive records. These are not automatically verified.`);
+    }).catch(error => setDefenseError(error instanceof Error ? error.message : 'Defensive CSV import failed.'));
+  }
 
   function importFile(f: File) {
     setImportError('');
@@ -476,6 +503,9 @@ export default function Home() {
             </div>
 
             <div className="heading-actions">
+              <button className="btn secondary" type="button" onClick={() => defenseFile.current?.click()} title="Import sourced team defensive averages (CSV)">
+                <FileUp size={16} /> Defense CSV
+              </button>
               <button
                 className="btn primary"
                 disabled={loading}
@@ -794,6 +824,8 @@ export default function Home() {
             </div>
           )}
 
+          {defenseError && <p className="defense-error" role="alert">Defense CSV: {defenseError}</p>}
+          <p className="defense-hint">Optional defense CSV columns: <code>sport,season,team,marketKey,allowedPerGame,games,source</code>. Import a verified team-level stat source for matchup context. Data is stored on this browser only.</p>
           <div className="footer-tip">
             <ShieldCheck size={18} />
             <span>
@@ -806,6 +838,8 @@ export default function Home() {
         </div>
       </main>
 
+      <input ref={defenseFile} type="file" accept=".csv,text/csv" style={{ display: 'none' }}
+        onChange={e => { const f = e.target.files?.[0]; if (f) importDefenseFile(f); e.target.value = ''; }} />
       <input
         ref={file}
         style={{ display: 'none' }}
@@ -893,6 +927,26 @@ export default function Home() {
                 <span><strong>{opponentSummary.average === null ? '—' : opponentSummary.average.toFixed(1)}</strong> average</span>
               </div>}
               {selectedSplits.opponents.length === 0 && <p className="split-note">Opponent information is not available for these records.</p>}
+              <div className="drawer-sub">
+                <strong>Opponent Defensive Rankings</strong>
+                <small>Import a properly sourced team-level defensive CSV. Choose the opponent manually; league ranks require all {selected.sport === 'NBA' ? 30 : 32} teams for this market and season.</small>
+              </div>
+              <label className="matchup-select-label">Defensive opponent ({defenseSeason === null ? 'unknown season' : seasonLabel(selected.sport, defenseSeason)})
+                <select className="matchup-select" value={activeDefenseTeam} onChange={e => setDefenseTeam(e.target.value)}>
+                  <option value="">Select imported team</option>
+                  {defenseTeams.map(team => <option key={team} value={team}>{team}</option>)}
+                </select>
+              </label>
+              {defenseInfo?.selected ? <div className="defense-panel">
+                <div className="defense-metrics">
+                  <span><small>ALLOWED / GAME</small><strong>{defenseInfo.selected.allowedPerGame.toFixed(1)}</strong></span>
+                  <span><small>DEFENSE RANK (FEWEST = #1)</small><strong>{defenseInfo.rank === null ? '—' : `#${defenseInfo.rank} / ${defenseInfo.expected}`}</strong></span>
+                  <span><small>TEAM GAMES</small><strong>{defenseInfo.selected.games}</strong></span>
+                </div>
+                <p>Source: {defenseInfo.selected.source} · {defenseInfo.coverage}/{defenseInfo.expected} teams represented.</p>
+                {!defenseInfo.completeLeague && <p>League ranking unavailable until a complete set of teams is imported for this exact market and season.</p>}
+              </div> : <p className="split-note">{defenseTeams.length ? 'Select a team to review imported defensive statistics.' : 'No imported defensive data for this market and season. Use the Defense CSV button above to add records.'}</p>}
+              <p className="split-note">Allowed-per-game data is descriptive team-level context, not a prediction of this player's performance. Imported sources have not been independently verified by PropIQ.</p>
             </section>}
             <div className="drawer-stats">
               <div>

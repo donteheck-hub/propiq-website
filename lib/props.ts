@@ -75,3 +75,62 @@ export function parseCsv(content: string): LogRow[] {
   if (required.some(k => !headers.includes(k))) throw Error('CSV needs columns: sport,player,marketKey,date,value (optional: opponent)');
   return lines.slice(1).map(line => { const cells = split(line), get = (k: string) => { const i = headers.indexOf(k); return i < 0 ? '' : cells[i] ?? ''; }; return { sport: get('sport').toUpperCase() as Sport, player: get('player'), marketKey: get('marketkey'), date: get('date'), value: Number(get('value')), opponent: get('opponent'), venue: (['home', 'h'].includes(get('venue').toLowerCase()) ? 'home' : ['away', 'a'].includes(get('venue').toLowerCase()) ? 'away' : undefined) as 'home' | 'away' | undefined }; }).filter(r => (r.sport === 'NBA' || r.sport === 'NFL') && !!r.player && !!r.date && /^\d{4}-\d{2}-\d{2}$/.test(r.date) && Number.isFinite(r.value) && !!MARKETS[r.sport][r.marketKey]);
 }
+
+
+// Optional, user-supplied team-level defensive data. Never derive league ranks from
+// the player-history subset requested by the browser (it is not league-wide).
+export type DefenseRow = {
+  sport: Sport; season: number; team: string; marketKey: string;
+  allowedPerGame: number; games: number; source: string;
+};
+export const TEAM_COUNTS: Record<Sport, number> = { NBA: 30, NFL: 32 };
+export function parseDefenseCsv(content: string): DefenseRow[] {
+  const lines = content.replace(/^\uFEFF/, '').trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) throw Error('CSV is empty. Include the header and team rows.');
+  const parse = (line: string): string[] => {
+    const cells: string[] = []; let token = ''; let quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (quoted && line[i + 1] === '"') { token += '"'; i++; } else quoted = !quoted; }
+      else if (c === ',' && !quoted) { cells.push(token.trim()); token = ''; }
+      else token += c;
+    }
+    if (quoted) throw Error('Unclosed quoted CSV field.');
+    cells.push(token.trim()); return cells;
+  };
+  const header = parse(lines[0]).map(x => x.toLowerCase());
+  const fields = ['sport','season','team','marketkey','allowedpergame','games','source'];
+  if (fields.some(f => !header.includes(f))) throw Error('Required columns: sport,season,team,marketKey,allowedPerGame,games,source');
+  const out = new Map<string, DefenseRow>();
+  for (const [index, line] of lines.slice(1).entries()) {
+    const cells = parse(line);
+    const get = (k: string) => cells[header.indexOf(k)] || '';
+    const sport = get('sport').toUpperCase() as Sport;
+    const season = Number(get('season'));
+    const team = get('team').toUpperCase().trim();
+    const marketKey = get('marketkey');
+    const allowedPerGame = Number(get('allowedpergame'));
+    const games = Number(get('games'));
+    const source = get('source').trim();
+    if (!(sport in MARKETS) || !MARKETS[sport]?.[marketKey] || !Number.isInteger(season) || season < 2000 || season > 2100 ||
+      !/^[A-Z0-9 .'-]{2,45}$/.test(team) || !get('allowedpergame') || !Number.isFinite(allowedPerGame) || allowedPerGame < 0 ||
+      !Number.isInteger(games) || games <= 0 || games > 100 || !source || source.length > 160) {
+      throw Error(`Invalid defensive data on CSV line ${index + 2}. Check sport, season, team, market, numbers and source.`);
+    }
+    const key = `${sport}|${season}|${marketKey}|${normalize(team)}`;
+    if (out.has(key)) throw Error(`Duplicate team/market/season on CSV line ${index + 2}.`);
+    out.set(key, {sport,season,team,marketKey,allowedPerGame,games,source});
+  }
+  if (out.size > 6000) throw Error('Import limit is 6,000 rows.');
+  return [...out.values()];
+}
+export function defenseContext(rows: DefenseRow[], sport: Sport, season: number, marketKey: string, team: string) {
+  const eligible = rows.filter(r => r.sport === sport && r.season === season && r.marketKey === marketKey);
+  const selected = eligible.find(r => normalize(r.team) === normalize(team));
+  const expected = TEAM_COUNTS[sport];
+  const completeLeague = new Set(eligible.map(r => normalize(r.team))).size === expected;
+  const ordered = [...eligible].sort((a,b) => a.allowedPerGame - b.allowedPerGame);
+  // Rank 1 = fewest allowed. Ties share a rank.
+  const rank = selected && completeLeague ? 1 + ordered.filter(r => r.allowedPerGame < selected.allowedPerGame).length : null;
+  return { selected, rank, coverage: eligible.length, expected, completeLeague };
+}
