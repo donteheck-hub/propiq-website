@@ -31,6 +31,11 @@ export default function AccountAccess() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Let the research dashboard load the correct account's cloud bookmarks.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('propiq-auth-change', { detail: account?.id ?? null }));
+  }, [account]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending) return;

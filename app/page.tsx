@@ -113,6 +113,10 @@ export default function Home() {
   const [defenseRows, setDefenseRows] = useState<DefenseRow[]>([]);
   const [defenseError, setDefenseError] = useState('');
   const [saved, setSaved] = useState<string[]>([]);
+  const [cloudAccount, setCloudAccount] = useState<string | null>(null);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [cloudMessage, setCloudMessage] = useState('');
+  const browserSaved = useRef<string[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [modal, setModal] = useState(false);
   const [help, setHelp] = useState(false);
@@ -142,7 +146,11 @@ export default function Home() {
         }
 
         if (Array.isArray(data.logs)) setLogs(data.logs);
-        if (Array.isArray(data.saved)) setSaved(data.saved.filter((value: unknown): value is string => typeof value === 'string' && value.length < 512));
+        if (Array.isArray(data.saved)) {
+          const keys = data.saved.filter((value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512);
+          browserSaved.current = keys;
+          setSaved(keys);
+        }
         if (Array.isArray(data.defenseRows)) setDefenseRows(data.defenseRows.filter((r: DefenseRow) => r && (r.sport === 'NBA' || r.sport === 'NFL') && Number.isFinite(r.allowedPerGame) && Number.isInteger(r.season) && typeof r.team === 'string' && typeof r.source === 'string'));
       }
     } catch (error) {
@@ -171,20 +179,79 @@ export default function Home() {
         JSON.stringify({
           props: props.filter(p => p.source === 'manual'),
           logs,
-          saved,
+          saved: cloudAccount ? browserSaved.current : saved,
           defenseRows
         })
       );
     } catch (error) {
       console.error('Unable to save research:', error);
     }
-  }, [hydrated, props, logs, saved, defenseRows]);
+  }, [hydrated, props, logs, saved, defenseRows, cloudAccount]);
 
   useEffect(() => {
     if (!hydrated) return;
     try { localStorage.setItem(ODDS_HISTORY_KEY, JSON.stringify(oddsSamples)); }
     catch (error) { console.warn('Could not save odds history', error); }
   }, [hydrated, oddsSamples]);
+
+  // Account bookmarks use Supabase with per-user RLS. Browser bookmarks remain
+  // separate and are never silently uploaded to a different person's account.
+  useEffect(() => {
+    if (!hydrated) return;
+    let active = true;
+    async function loadAccount(userId: string | null) {
+      setCloudReady(false);
+      setCloudAccount(userId);
+      setCloudMessage('');
+      if (!userId) {
+        setSaved(browserSaved.current);
+        return;
+      }
+      setSaved([]); // Never display one account's bookmarks for another account.
+      try {
+        const response = await fetch('/api/saved-props', { cache: 'no-store' });
+        const result = await response.json() as { saved?: unknown; error?: string };
+        if (!response.ok || !Array.isArray(result.saved)) throw Error(result.error || 'Unable to load bookmarks.');
+        if (active) {
+          setSaved(result.saved.filter((v): v is string => typeof v === 'string'));
+          setCloudReady(true);
+        }
+      } catch (error) {
+        if (active) setCloudMessage(error instanceof Error ? error.message : 'Cloud bookmarks unavailable.');
+      }
+    }
+    const onAccount = (event: Event) => { void loadAccount((event as CustomEvent<string | null>).detail); };
+    window.addEventListener('propiq-auth-change', onAccount);
+    // Covers the rare case when account UI initializes before this listener.
+    void fetch('/api/auth', { cache: 'no-store' }).then(r => r.json())
+      .then((result: { user?: { id?: string } | null }) => { if (active) void loadAccount(result.user?.id || null); })
+      .catch(() => { if (active) void loadAccount(null); });
+    return () => { active = false; window.removeEventListener('propiq-auth-change', onAccount); };
+  }, [hydrated]);
+
+  // Send updates after the user changes a bookmark; never send browser history
+  // or imported game logs to the cloud.
+  const cloudInitialized = useRef(false);
+  useEffect(() => {
+    if (!cloudAccount || !cloudReady) { cloudInitialized.current = false; return; }
+    if (!cloudInitialized.current) { cloudInitialized.current = true; return; }
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch('/api/saved-props', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin', body: JSON.stringify({ saved })
+        });
+        if (!response.ok) {
+          const result = await response.json() as { error?: string };
+          throw Error(result.error || 'Unable to sync bookmarks.');
+        }
+        setCloudMessage('');
+      } catch (error) {
+        setCloudMessage(error instanceof Error ? error.message : 'Bookmark sync failed.');
+      }
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [saved, cloudAccount, cloudReady]);
 
   const refresh = useCallback(async (selectedSport: Sport) => {
     const currentRequest = ++requestId.current;
@@ -923,6 +990,7 @@ export default function Home() {
           <div className="section-title premium-section-title">
             <div>
               <div className="eyebrow">RESEARCH DESK</div>
+              {tab === 'saved' && cloudMessage && <p className="muted smaller" role="status">Cloud sync: {cloudMessage}</p>}
               <h2>{tab === 'saved' ? 'Saved player props' : tab === 'finder' ? 'Historical trend finder' : tab === 'odds' ? 'Compare sportsbook prices' : tab === 'movement' ? 'Line movement & odds history' : tab === 'matchups' ? 'Opponent matchup research' : 'Explore player props'}</h2>
               <p>
                 {tab === 'finder' ? 'Screen live player props by completed historical samples. These are past results, not win probabilities or betting recommendations.' : tab === 'odds' ? 'Compare the exact same live player prop across DraftKings and FanDuel. Better prices increase potential payout, not the chance of winning.' : tab === 'movement' ? 'Track actual changes between recorded sportsbook snapshots. Daily refresh means movements between snapshots are not captured.' : tab === 'matchups' ? 'Compare recorded player results against an opponent. Select a team using historical game logs; no projected matchup is assumed.' : 'Click Last 5, Last 10, or L10 AVG to sort player props. Click a prop for a game-by-game breakdown.'}
@@ -1253,6 +1321,7 @@ export default function Home() {
                           }
                           onClick={e => {
                             e.stopPropagation();
+                            if (cloudAccount && !cloudReady) return;
                             setSaved(previous =>
                               isSaved(p, previous)
                                 ? previous.filter(id => id !== p.id && id !== bookmarkKey(p))
