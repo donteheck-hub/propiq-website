@@ -765,14 +765,6 @@ export default function Home() {
           </div>
 
           <div className="top-actions">
-            <Pill kind={status === 'live' ? 'green' : 'amber'}>
-              {loading
-                ? 'LOADING ODDS'
-                : status === 'live' ? 'UPDATED ODDS'
-                  : status === 'cached' ? 'CACHED ODDS'
-                  : status === 'stale' ? 'STALE ODDS'
-                  : 'ODDS UNAVAILABLE'}
-            </Pill>
             <button type="button" className="top-help" aria-label="Open help and getting started" title="Help & getting started" onClick={() => setHelp(true)}><CircleHelp size={19} /></button>
           </div>
         </header>
@@ -794,22 +786,7 @@ export default function Home() {
               </p>
             </div>
 
-            <div className="heading-actions">
-              <button className="btn secondary" type="button" onClick={() => defenseFile.current?.click()} title="Import sourced team defensive averages (CSV)">
-                <FileUp size={16} /> Defense CSV
-              </button>
-              <button
-                className="btn primary"
-                disabled={loading}
-                onClick={() => refresh(sport)}
-              >
-                <RefreshCw
-                  className={loading ? 'spin' : ''}
-                  size={16}
-                />
-                {loading ? 'Checking...' : 'Check Cached Odds'}
-              </button>
-            </div>
+
           </div>
 
           <div className="sport-tabs">
@@ -884,19 +861,14 @@ export default function Home() {
             </p>
           )}
 
-          <div className="coverage-note" role="status">
-            <ShieldCheck size={16} />
-            <span>{oddsCoverage || 'Live odds coverage details appear after refresh.'} {historyStatus} Hit rates use available games; incomplete samples are labeled.</span>
-          </div>
+
 
           {tab === 'dashboard' && (
             <section className="command-center" aria-label="Research dashboard">
               <div className="command-heading">
                 <div><span className="eyebrow">RESEARCH COMMAND CENTER</span><h2>Everything you need to research {sport}</h2>
                   <p>Observed data from your selected {seasonView === 'all' ? 'all-season' : seasonView} history. No generated picks or predictive probabilities.</p></div>
-                <Pill kind={status === 'live' ? 'green' : status === 'stale' || status === 'unavailable' ? 'amber' : 'neutral'}>
-                  {status === 'live' ? 'FRESH ODDS' : status === 'cached' ? 'CACHED ODDS' : status === 'stale' ? 'STALE ODDS' : status === 'loading' ? 'LOADING' : 'ODDS UNAVAILABLE'}
-                </Pill>
+
               </div>
               <div className="command-metrics">
                 <div><span><Database size={15}/> Live offers</span><strong>{dashboardCoverage.live}</strong><small>Player prop outcomes</small></div>
@@ -1365,7 +1337,7 @@ export default function Home() {
           )}
 
           {defenseError && <p className="defense-error" role="alert">Defense CSV: {defenseError}</p>}
-          <p className="defense-hint">Optional defense CSV columns: <code>sport,season,team,marketKey,allowedPerGame,games,source</code>. Import a verified team-level stat source for matchup context. Data is stored on this browser only.</p>
+
           <div className="footer-tip">
             <ShieldCheck size={18} />
             <span>
@@ -1483,7 +1455,8 @@ export default function Home() {
               {selectedSplits.opponents.length === 0 && <p className="split-note">Opponent information is not available for these records.</p>}
               <div className="drawer-sub">
                 <strong>Opponent Defensive Rankings</strong>
-                <small>Import a properly sourced team-level defensive CSV. Choose the opponent manually; league ranks require all {selected.sport === 'NBA' ? 30 : 32} teams for this market and season.</small>
+                <small>Choose an imported opponent; league ranks require all {selected.sport === 'NBA' ? 30 : 32} teams for this market and season.</small>
+                <button type="button" className="btn secondary" onClick={() => defenseFile.current?.click()}><FileUp size={15} /> Import defense data</button>
               </div>
               <label className="matchup-select-label">Defensive opponent ({defenseSeason === null ? 'unknown season' : seasonLabel(selected.sport, defenseSeason)})
                 <select className="matchup-select" value={activeDefenseTeam} onChange={e => setDefenseTeam(e.target.value)}>
@@ -1499,7 +1472,7 @@ export default function Home() {
                 </div>
                 <p>Source: {defenseInfo.selected.source} · {defenseInfo.coverage}/{defenseInfo.expected} teams represented.</p>
                 {!defenseInfo.completeLeague && <p>League ranking unavailable until a complete set of teams is imported for this exact market and season.</p>}
-              </div> : <p className="split-note">{defenseTeams.length ? 'Select a team to review imported defensive statistics.' : 'No imported defensive data for this market and season. Use the Defense CSV button above to add records.'}</p>}
+              </div> : <p className="split-note">{defenseTeams.length ? 'Select a team to review imported defensive statistics.' : 'No imported defensive data for this market and season. Use Import defense data to add records.'}</p>}
               <p className="split-note">Allowed-per-game data is descriptive team-level context, not a prediction of this player's performance. Imported sources have not been independently verified by PropIQ.</p>
             </section>}
             <div className="drawer-stats">
