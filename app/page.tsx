@@ -9,6 +9,7 @@ import {
   SlidersHorizontal, Target, TrendingUp, X, Shield, History, Gauge, ArrowUpRight, Database
 } from 'lucide-react';
 import AccountAccess from './components/AccountAccess';
+import BillingTestActions from './components/BillingTestActions';
 import {
   analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, recentTrends, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
 } from '../lib/props';
@@ -1726,7 +1727,7 @@ export default function Home() {
               <div>
                 <span className="eyebrow">PROPIQ MEMBERSHIPS</span>
                 <h2 id="membership-title">Research plans built for your game</h2>
-                <p>Preview our proposed membership tiers. Paid subscriptions are not available yet.</p>
+                <p>Preview membership tiers and test Stripe checkout. Real payments are disabled.</p>
               </div>
               <button className="iconbtn" type="button" aria-label="Close membership plans" onClick={() => setPlansOpen(false)}><X size={21} /></button>
             </div>
@@ -1743,17 +1744,17 @@ export default function Home() {
                 <div className="membership-price">$9.99 <small>/ month</small></div>
                 <p>Deeper research across games and markets.</p>
                 <ul><li>Advanced matchup and trend tools</li><li>Sportsbook odds comparison</li><li>Cloud-saved research after account setup</li></ul>
-                <span className="membership-status">Planned · not for sale</span>
+                <BillingTestActions plan="pro" />
               </article>
               <article className="membership-card">
                 <span className="membership-name">Elite</span>
                 <div className="membership-price">$19.99 <small>/ month</small></div>
                 <p>Expanded tools as our data platform grows.</p>
                 <ul><li>Premium research dashboard</li><li>Advanced line movement history</li><li>Future research alerts and analytics</li></ul>
-                <span className="membership-status">Planned · not for sale</span>
+                <BillingTestActions plan="elite" />
               </article>
             </div>
-            <p className="membership-note">These are proposed introductory prices and feature allocations. Existing research features stay accessible during development. No billing or paid access restrictions are active.</p>
+            <p className="membership-note">Stripe test checkout is for development only. No real charges or paid access restrictions are active. Membership status is granted only after a verified Stripe webhook.</p>
           </section>
         </div>
       )}
