@@ -38,13 +38,29 @@ function clearCookies(response: NextResponse) {
 async function authFetch(path: string, method: string, payload?: object, accessToken?: string) {
   const config = settings();
   if (!config) return { status: 503, data: { error: 'Account service is not configured.' } as AuthResponse };
-  const response = await fetch(`${config.base}${path}`, {
-    method, cache: 'no-store', signal: AbortSignal.timeout(12000),
-    headers: { 'apikey': config.key, 'Authorization': `Bearer ${accessToken || config.key}`, 'Content-Type': 'application/json' },
-    ...(payload ? { body: JSON.stringify(payload) } : {})
-  });
-  const data = await response.json().catch(() => ({})) as AuthResponse;
-  return { status: response.status, data };
+  try {
+    const response = await fetch(`${config.base}${path}`, {
+      method, cache: 'no-store', signal: AbortSignal.timeout(12000),
+      headers: { 'apikey': config.key, 'Authorization': `Bearer ${accessToken || config.key}`, 'Content-Type': 'application/json' },
+      ...(payload ? { body: JSON.stringify(payload) } : {})
+    });
+    const data = await response.json().catch(() => ({})) as AuthResponse;
+    if (response.status >= 500) {
+      // Do not expose private provider responses or credentials to visitors.
+      console.error(`PropIQ auth: Supabase returned HTTP ${response.status}.`);
+      return { status: 503, data: { error: 'Supabase authentication is temporarily unavailable (provider error).' } as AuthResponse };
+    }
+    return { status: response.status, data };
+  } catch (error) {
+    const isTimeout = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError');
+    console.error(`PropIQ auth: ${isTimeout ? 'Supabase request timed out' : 'Unable to connect to Supabase'}. Verify SUPABASE_URL and Railway outbound connectivity.`);
+    return {
+      status: 503,
+      data: { error: isTimeout
+        ? 'Supabase connection timed out. Check Railway logs and Supabase availability.'
+        : 'Cannot connect to Supabase. Check the SUPABASE_URL in Railway and redeploy.' } as AuthResponse
+    };
+  }
 }
 function providerError(data: AuthResponse) {
   return data.error_description || data.msg || data.message || data.error || 'Account request failed.';
@@ -108,7 +124,7 @@ export async function POST(request: NextRequest) {
     const result = action === 'signup'
       ? await authFetch('/signup', 'POST', { email, password })
       : await authFetch('/token?grant_type=password', 'POST', { email, password });
-    if (result.status < 200 || result.status >= 300) return json({ error: providerError(result.data) }, result.status === 429 ? 429 : 400);
+    if (result.status < 200 || result.status >= 300) return json({ error: providerError(result.data) }, result.status === 429 ? 429 : result.status === 503 ? 503 : 400);
     if (!result.data.access_token) return json({ needsConfirmation: true, message: 'Check your email to confirm your account.' });
     const response = json({ user: publicUser(result.data.user) });
     setAuthCookies(response, result.data);
