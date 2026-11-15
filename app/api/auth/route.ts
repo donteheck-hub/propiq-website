@@ -50,9 +50,30 @@ function providerError(data: AuthResponse) {
   return data.error_description || data.msg || data.message || data.error || 'Account request failed.';
 }
 function sameOrigin(request: NextRequest) {
-  const origin = request.headers.get('origin');
-  if (!origin) return false;
-  try { return new URL(origin).host === request.nextUrl.host && new URL(origin).protocol === request.nextUrl.protocol; } catch { return false; }
+  const originHeader = request.headers.get('origin');
+  if (!originHeader) return false;
+  try {
+    const origin = new URL(originHeader);
+    // Railway terminates TLS at its proxy. NextRequest.nextUrl may contain
+    // the container's internal host or http scheme, so it is not reliable
+    // for validating the public browser origin.
+    if (origin.origin !== originHeader || origin.username || origin.password) return false;
+    if (process.env.NODE_ENV === 'production' && origin.protocol !== 'https:') return false;
+    if (origin.protocol !== 'https:' && origin.protocol !== 'http:') return false;
+    const hosts = [request.headers.get('host'), request.headers.get('x-forwarded-host')]
+      .filter((host): host is string => Boolean(host) && !host!.includes(','))
+      .map(host => host.toLowerCase());
+    // The browser's origin must match a host served by this request.
+    // Optional explicit allowlist can be used when a reverse proxy rewrites
+    // both host headers. It must be a full https:// URL, not a wildcard.
+    const configured = process.env.AUTH_ALLOWED_ORIGIN?.trim();
+    if (configured) {
+      const allowed = new URL(configured);
+      if (allowed.protocol !== 'https:' || allowed.origin !== configured) return false;
+      return origin.origin === allowed.origin;
+    }
+    return hosts.includes(origin.host.toLowerCase());
+  } catch { return false; }
 }
 export async function GET(request: NextRequest) {
   if (!settings()) return json({ configured: false, user: null });
