@@ -120,6 +120,7 @@ export default function Home() {
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [modal, setModal] = useState(false);
   const [help, setHelp] = useState(false);
+  const [plansOpen, setPlansOpen] = useState(false);
   const [importError, setImportError] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -813,6 +814,11 @@ export default function Home() {
         >
           <Bookmark size={18} />
           Saved Props <b>{saved.length || ''}</b>
+        </button>
+
+        <div className="side-label spaced">MEMBERSHIP</div>
+        <button className="nav" type="button" onClick={() => { setPlansOpen(true); setMobileNavOpen(false); }}>
+          <ShieldCheck size={18} /> Membership Plans
         </button>
 
         <div className="sidebar-bottom">
@@ -1710,6 +1716,45 @@ export default function Home() {
 
             <ManualForm onSave={addManual} sport={sport} />
           </div>
+        </div>
+      )}
+
+      {plansOpen && (
+        <div className="overlay center" role="presentation" onClick={() => setPlansOpen(false)}>
+          <section className="membership-dialog" role="dialog" aria-modal="true" aria-labelledby="membership-title" onClick={e => e.stopPropagation()}>
+            <div className="membership-head">
+              <div>
+                <span className="eyebrow">PROPIQ MEMBERSHIPS</span>
+                <h2 id="membership-title">Research plans built for your game</h2>
+                <p>Preview our proposed membership tiers. Paid subscriptions are not available yet.</p>
+              </div>
+              <button className="iconbtn" type="button" aria-label="Close membership plans" onClick={() => setPlansOpen(false)}><X size={21} /></button>
+            </div>
+            <div className="membership-grid">
+              <article className="membership-card">
+                <span className="membership-name">Free</span>
+                <div className="membership-price">$0 <small>/ month</small></div>
+                <p>Explore the PropIQ research experience.</p>
+                <ul><li>NBA and NFL prop explorer</li><li>Basic game-history research</li><li>Browser-saved bookmarks</li></ul>
+                <span className="membership-status">Currently available · no payment required</span>
+              </article>
+              <article className="membership-card featured">
+                <span className="membership-name">Pro</span>
+                <div className="membership-price">$9.99 <small>/ month</small></div>
+                <p>Deeper research across games and markets.</p>
+                <ul><li>Advanced matchup and trend tools</li><li>Sportsbook odds comparison</li><li>Cloud-saved research after account setup</li></ul>
+                <span className="membership-status">Planned · not for sale</span>
+              </article>
+              <article className="membership-card">
+                <span className="membership-name">Elite</span>
+                <div className="membership-price">$19.99 <small>/ month</small></div>
+                <p>Expanded tools as our data platform grows.</p>
+                <ul><li>Premium research dashboard</li><li>Advanced line movement history</li><li>Future research alerts and analytics</li></ul>
+                <span className="membership-status">Planned · not for sale</span>
+              </article>
+            </div>
+            <p className="membership-note">These are proposed introductory prices and feature allocations. Existing research features stay accessible during development. No billing or paid access restrictions are active.</p>
+          </section>
         </div>
       )}
 
