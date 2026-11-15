@@ -6,7 +6,7 @@ import {
   Activity, ArrowDownUp, BarChart3, Bookmark, CalendarDays,
   ChevronDown, CircleHelp, Download, FileUp, Filter,
   LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles, ArrowLeftRight,
-  SlidersHorizontal, Target, TrendingUp, X, Shield, History
+  SlidersHorizontal, Target, TrendingUp, X, Shield, History, Gauge, ArrowUpRight, Database
 } from 'lucide-react';
 import {
   analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, recentTrends, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
@@ -16,6 +16,23 @@ const STORAGE_KEY = 'prop-iq-v2';
 const ODDS_HISTORY_KEY = 'prop-iq-odds-history-v1';
 type OddsSample = { sport: Sport; player: string; event: string; commence: string; market: string; marketKey: string; side: 'Over'|'Under'; bookmaker: string; line: number; odds: number; observedAt: string };
 const sampleKey = (p: Pick<OddsSample, 'sport'|'player'|'event'|'commence'|'marketKey'|'side'|'bookmaker'>) => [p.sport, normalize(p.player), normalize(p.event), p.commence, p.marketKey, p.side, normalize(p.bookmaker)].join('|');
+// A bookmaker's line and odds can change. Neither should invalidate a bookmark.
+const bookmarkKey = (p: Prop) => `saved:v2:${sampleKey(p)}`;
+const isSaved = (p: Prop, saved: string[]) => saved.includes(bookmarkKey(p)) || saved.includes(p.id);
+const validLiveProp = (p: unknown, sport: Sport): p is Prop => {
+  if (!p || typeof p !== 'object') return false;
+  const v = p as Partial<Prop>;
+  return v.source === 'live' && v.sport === sport &&
+    typeof v.id === 'string' && v.id.length > 0 &&
+    typeof v.player === 'string' && v.player.trim().length > 0 &&
+    typeof v.marketKey === 'string' && !!MARKETS[sport][v.marketKey] &&
+    typeof v.bookmaker === 'string' && v.bookmaker.trim().length > 0 &&
+    typeof v.event === 'string' && typeof v.commence === 'string' &&
+    (v.side === 'Over' || v.side === 'Under') &&
+    typeof v.line === 'number' && Number.isFinite(v.line) && v.line >= 0 &&
+    typeof v.odds === 'number' && Number.isFinite(v.odds) &&
+    (v.odds <= -100 || v.odds >= 100);
+};
 
 const PAGE_SIZE = 40;
 const MAX_HISTORY_BYTES = 5 * 1024 * 1024;
@@ -51,14 +68,14 @@ const normalizeBook = (name: string) =>
 // Images are optional enhancements: if the historical provider does not supply a
 // verified NBA person ID, or the CDN has no photo, use an initials avatar.
 function PlayerAvatar({ name, nbaPlayerId, nflHeadshotUrl, size = 'table' }: { name: string; nbaPlayerId?: number; nflHeadshotUrl?: string; size?: 'table' | 'large' }) {
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || 'PI';
   const imageUrl = nflHeadshotUrl || (Number.isSafeInteger(nbaPlayerId) && nbaPlayerId ? `https://cdn.nba.com/headshots/nba/latest/260x190/${nbaPlayerId}.png` : undefined);
-  const showPhoto = !!imageUrl && !failed;
+  const showPhoto = !!imageUrl && imageUrl !== failedUrl;
   return (
     <span className={'player-avatar ' + (size === 'large' ? 'avatar-large' : '')} aria-hidden="true">
       {showPhoto ? (
-        <img src={imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        <img src={imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailedUrl(imageUrl || null)} />
       ) : <span>{initials}</span>}
     </span>
   );
@@ -69,7 +86,7 @@ export default function Home() {
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
-  const [tab, setTab] = useState<'explore' | 'saved' | 'finder' | 'odds' | 'matchups' | 'movement'>('explore');
+  const [tab, setTab] = useState<'dashboard' | 'explore' | 'saved' | 'finder' | 'odds' | 'matchups' | 'movement'>('dashboard');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [oddsSamples, setOddsSamples] = useState<OddsSample[]>([]);
@@ -124,7 +141,7 @@ export default function Home() {
         }
 
         if (Array.isArray(data.logs)) setLogs(data.logs);
-        if (Array.isArray(data.saved)) setSaved(data.saved);
+        if (Array.isArray(data.saved)) setSaved(data.saved.filter((value: unknown): value is string => typeof value === 'string' && value.length < 512));
         if (Array.isArray(data.defenseRows)) setDefenseRows(data.defenseRows.filter((r: DefenseRow) => r && (r.sport === 'NBA' || r.sport === 'NFL') && Number.isFinite(r.allowedPerGame) && Number.isInteger(r.season) && typeof r.team === 'string' && typeof r.source === 'string'));
       }
     } catch (error) {
@@ -200,7 +217,11 @@ export default function Home() {
       // Ignore an older request if the user switched sports.
       if (currentRequest !== requestId.current) return;
 
-      const liveProps = data.props as Prop[];
+      // Reject malformed or cross-sport outcomes without hiding valid prices.
+      const valid = (data.props as unknown[]).filter((p): p is Prop => validLiveProp(p, selectedSport));
+      const unique = new Map<string, Prop>();
+      for (const prop of valid) unique.set(prop.id, prop);
+      const liveProps = [...unique.values()];
 
       setProps(previous => [
         ...previous.filter(
@@ -459,7 +480,7 @@ export default function Home() {
 
   const visible = useMemo(() => sportProps
     .filter(p =>
-      (tab !== 'saved' || saved.includes(p.id)) &&
+      (tab !== 'saved' || isSaved(p, saved)) &&
       (tab !== 'finder' || (p.source === 'live' && p.stats.games.length >= finderSample && (finderSample === 20 ? p.stats.hit20?.pct : p.stats.hit10?.pct) !== null && (finderSample === 20 ? (p.stats.hit20?.pct ?? -1) : (p.stats.hit10?.pct ?? -1)) >= finderThreshold)) &&
       (market === 'all' || p.marketKey === market) &&
       (side === 'all' || p.side === side) &&
@@ -647,6 +668,30 @@ export default function Home() {
     }).sort((a,b) => b.last.observedAt.localeCompare(a.last.observedAt)).slice(0, 250);
   }, [oddsSamples, sport, market, side, sportsbook, query]);
 
+  // Dashboard summaries come from recorded data only, with a full 10-game sample.
+  // Collapse identical sportsbook offers to avoid treating the same prop as many trends.
+  const dashboardTrends = useMemo(() => {
+    const byProp = new Map<string, (typeof sportProps)[number]>();
+    for (const p of sportProps) {
+      if (p.source !== 'live' || p.stats.hit10?.total !== 10) continue;
+      const key = [normalize(p.player), p.marketKey, p.side, p.line, normalize(p.event), p.commence].join('|');
+      const previous = byProp.get(key);
+      if (!previous || p.odds > previous.odds) byProp.set(key, p);
+    }
+    return [...byProp.values()].sort((a,b) =>
+      (b.stats.hit10?.pct ?? 0) - (a.stats.hit10?.pct ?? 0) ||
+      a.player.localeCompare(b.player)).slice(0,5);
+  }, [sportProps]);
+  const dashboardCoverage = useMemo(() => {
+    const live = sportProps.filter(p => p.source === 'live');
+    const withHistory = live.filter(p => p.stats.games.length > 0).length;
+    const fullTen = live.filter(p => p.stats.hit10?.total === 10).length;
+    const uniquePlayers = new Set(live.map(p => normalize(p.player))).size;
+    return { live:live.length, withHistory, fullTen, uniquePlayers };
+  }, [sportProps]);
+  const dashboardMovements = useMemo(() => movementRows.filter(row =>
+    row.count > 1 && (row.lineDelta !== 0 || row.oddsDelta !== 0)).slice(0,4), [movementRows]);
+
   return (
     <div className="shell">
       {mobileNavOpen && (
@@ -665,6 +710,10 @@ export default function Home() {
 
         <button className="sidebar-close iconbtn" type="button" aria-label="Close menu" onClick={() => setMobileNavOpen(false)}><X size={19} /></button>
         <div className="side-label">WORKSPACE</div>
+
+        <button className={'nav ' + (tab === 'dashboard' ? 'active' : '')} onClick={() => { setTab('dashboard'); setMobileNavOpen(false); }}>
+          <Gauge size={18} /> Research Dashboard
+        </button>
 
         <button
           className={'nav ' + (tab === 'explore' ? 'active' : '')}
@@ -711,7 +760,7 @@ export default function Home() {
             <button className="mobile-menu-button" type="button" aria-label="Open navigation" aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen(true)}><Menu size={21} /></button>
           <div className="crumb">
             Workspace <span>/</span>{' '}
-            {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'movement' ? 'Line History' : tab === 'matchups' ? 'Matchup Center' : 'Saved Props'}
+            {tab === 'dashboard' ? 'Research Dashboard' : tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'movement' ? 'Line History' : tab === 'matchups' ? 'Matchup Center' : 'Saved Props'}
           </div>
           </div>
 
@@ -736,7 +785,7 @@ export default function Home() {
               </div>
 
               <h1>
-                {tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'movement' ? 'Line History' : tab === 'matchups' ? 'Matchup Center' : 'Your Watchlist'}
+                {tab === 'dashboard' ? 'Research Dashboard' : tab === 'explore' ? 'Prop Explorer' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : tab === 'movement' ? 'Line History' : tab === 'matchups' ? 'Matchup Center' : 'Your Watchlist'}
               </h1>
 
               <p>
@@ -840,6 +889,63 @@ export default function Home() {
             <span>{oddsCoverage || 'Live odds coverage details appear after refresh.'} {historyStatus} Hit rates use available games; incomplete samples are labeled.</span>
           </div>
 
+          {tab === 'dashboard' && (
+            <section className="command-center" aria-label="Research dashboard">
+              <div className="command-heading">
+                <div><span className="eyebrow">RESEARCH COMMAND CENTER</span><h2>Everything you need to research {sport}</h2>
+                  <p>Observed data from your selected {seasonView === 'all' ? 'all-season' : seasonView} history. No generated picks or predictive probabilities.</p></div>
+                <Pill kind={status === 'live' ? 'green' : status === 'stale' || status === 'unavailable' ? 'amber' : 'neutral'}>
+                  {status === 'live' ? 'FRESH ODDS' : status === 'cached' ? 'CACHED ODDS' : status === 'stale' ? 'STALE ODDS' : status === 'loading' ? 'LOADING' : 'ODDS UNAVAILABLE'}
+                </Pill>
+              </div>
+              <div className="command-metrics">
+                <div><span><Database size={15}/> Live offers</span><strong>{dashboardCoverage.live}</strong><small>Player prop outcomes</small></div>
+                <div><span><Activity size={15}/> Players listed</span><strong>{dashboardCoverage.uniquePlayers}</strong><small>Distinct players</small></div>
+                <div><span><BarChart3 size={15}/> With history</span><strong>{dashboardCoverage.withHistory}</strong><small>Of {dashboardCoverage.live} live offers</small></div>
+                <div><span><ShieldCheck size={15}/> Full L10 samples</span><strong>{dashboardCoverage.fullTen}</strong><small>10 recorded games required</small></div>
+              </div>
+              <div className="command-grid">
+                <div className="command-panel">
+                  <div className="command-panel-head"><div><h3>Historical trend watch</h3><p>Highest observed Last 10 hit rates · complete samples</p></div><button onClick={() => setTab('finder')}>Smart Finder <ArrowUpRight size={15}/></button></div>
+                  {dashboardTrends.length ? dashboardTrends.map(p => (
+                    <button className="command-trend-row" key={p.id} onClick={() => setSelected(p)}>
+                      <PlayerAvatar name={p.player} {...playerHeadshots.get(`${p.sport}|${normalize(p.player)}`)}/>
+                      <span className="command-item-label"><strong>{p.player}</strong><small>{p.side} {p.line} {p.market} · {p.bookmaker}</small></span>
+                      <span className="command-rate">{p.stats.hit10?.pct}%<small>{p.stats.hit10?.hits}/10</small></span>
+                    </button>
+                  )) : <p className="command-empty">No complete 10-game samples yet. Check your season selection or historical-data coverage.</p>}
+                </div>
+                <div className="command-panel">
+                  <div className="command-panel-head"><div><h3>Sportsbook price differences</h3><p>Same player, game, side and exact line</p></div><button onClick={() => setTab('odds')}>Compare <ArrowUpRight size={15}/></button></div>
+                  {oddsComparisons.length ? oddsComparisons.slice(0,4).map(({best,other,gain}) => (
+                    <button className="command-compare-row" key={best.id} onClick={() => setSelected(best)}>
+                      <span className="command-item-label"><strong>{best.player}</strong><small>{best.side} {best.line} {best.market}</small><small>{best.bookmaker} {fmtOdds(best.odds)} vs {other.bookmaker} {fmtOdds(other.odds)}</small></span>
+                      <span className="command-gain">+${gain.toFixed(2)}<small>profit / $100</small></span>
+                    </button>
+                  )) : <p className="command-empty">No exact-line comparisons across both sportsbooks in the current dataset.</p>}
+                </div>
+                <div className="command-panel">
+                  <div className="command-panel-head"><div><h3>Recorded line changes</h3><p>Movement between your saved snapshots</p></div><button onClick={() => setTab('movement')}>Line History <ArrowUpRight size={15}/></button></div>
+                  {dashboardMovements.length ? dashboardMovements.map(row => (
+                    <div className="command-compare-row" key={sampleKey(row.first)}>
+                      <span className="command-item-label"><strong>{row.last.player}</strong><small>{row.last.side} {row.last.market} · {row.last.bookmaker}</small><small>{row.first.line} → {row.last.line} · {fmtOdds(row.first.odds)} → {fmtOdds(row.last.odds)}</small></span>
+                      <span className="command-delta">{row.lineDelta > 0 ? '+' : ''}{row.lineDelta.toFixed(1)}<small>line change</small></span>
+                    </div>
+                  )) : <p className="command-empty">No recorded price or line changes yet. Your daily snapshots only show changes captured between refreshes.</p>}
+                </div>
+                <div className="command-panel command-actions">
+                  <div className="command-panel-head"><div><h3>Quick research tools</h3><p>Continue where you left off</p></div></div>
+                  <button onClick={() => setTab('explore')}><Search size={18}/> Browse all player props <ArrowUpRight size={15}/></button>
+                  <button onClick={() => setTab('matchups')}><Shield size={18}/> Research opponent matchups <ArrowUpRight size={15}/></button>
+                  <button onClick={() => setTab('saved')}><Bookmark size={18}/> View your saved props <ArrowUpRight size={15}/></button>
+                  <div className="command-note"><ShieldCheck size={16}/><span>Historical records can be incomplete. Sportsbook prices may be stale, and no statistical trend guarantees a future outcome.</span></div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {tab !== 'dashboard' && (
+            <>
           <div className="section-title premium-section-title">
             <div>
               <div className="eyebrow">RESEARCH DESK</div>
@@ -1169,21 +1275,21 @@ export default function Home() {
                         <button
                           className={
                             'bookmark ' +
-                            (saved.includes(p.id) ? 'saved' : '')
+                            (isSaved(p, saved) ? 'saved' : '')
                           }
                           onClick={e => {
                             e.stopPropagation();
                             setSaved(previous =>
-                              previous.includes(p.id)
-                                ? previous.filter(id => id !== p.id)
-                                : [...previous, p.id]
+                              isSaved(p, previous)
+                                ? previous.filter(id => id !== p.id && id !== bookmarkKey(p))
+                                : [...previous, bookmarkKey(p)]
                             );
                           }}
                         >
                           <Bookmark
                             size={17}
                             fill={
-                              saved.includes(p.id)
+                              isSaved(p, saved)
                                 ? 'currentColor'
                                 : 'none'
                             }
@@ -1253,6 +1359,9 @@ export default function Home() {
                 Next
               </button>
             </div>
+          )}
+
+            </>
           )}
 
           {defenseError && <p className="defense-error" role="alert">Defense CSV: {defenseError}</p>}
