@@ -370,3 +370,39 @@ tbody tr:hover {background:#1b3043}
 .auth-error,.auth-message{border:1px solid #775060;background:#33222e;color:#ffd7db;padding:12px;border-radius:9px;line-height:1.5;font-size:12px}
 .auth-account p{font-size:13px;color:#c1d5df;line-height:1.6}.auth-account strong{color:#f2fcff;overflow-wrap:anywhere}
 @media(max-width:700px){.account-trigger{padding:9px}.account-trigger span{display:none}.auth-dialog{padding:20px}}
+
+/* PropIQ Phase 2 — Research Command Center */
+.command-center{margin:30px 0 28px;display:grid;gap:20px}
+.command-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.command-heading h2{font-size:22px;letter-spacing:-.5px;margin:8px 0 6px;color:#f0f7fc}
+.command-heading p{margin:0;color:#9eb4c5;font-size:12px;line-height:1.7}
+.command-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.command-metrics>div{background:#132437;border:1px solid #304657;border-radius:12px;padding:18px;min-width:0}
+.command-metrics span{display:flex;align-items:center;gap:7px;color:#b3c5d4;font-size:11px;font-weight:700}
+.command-metrics span svg{color:#65d4c5}
+.command-metrics strong{display:block;font-size:29px;font-weight:800;color:#f1f9fd;margin:12px 0 2px}
+.command-metrics small{display:block;color:#8ea7bb;font-size:11px}
+.command-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.command-panel{background:#121e2e;border:1px solid #304557;border-radius:14px;padding:19px;min-width:0}
+.command-panel-head{display:flex;align-items:start;justify-content:space-between;gap:10px;margin-bottom:15px}
+.command-panel-head h3{margin:0 0 5px;font-size:15px;color:#f0f8fd}
+.command-panel-head p{margin:0;color:#9db2c3;font-size:11px;line-height:1.5}
+.command-panel-head>button{flex-shrink:0;border:1px solid #356575;background:#173643;color:#96e8dc;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:750;display:flex;align-items:center;gap:5px}
+.command-panel-head>button:hover{background:#225163}
+.command-trend-row,.command-compare-row{display:flex;align-items:center;gap:10px;width:100%;padding:12px 4px;background:none;border:0;border-top:1px solid #2b4051;text-align:left;color:inherit}
+button.command-trend-row:hover,button.command-compare-row:hover{background:#1b3042;border-radius:6px}
+.command-item-label{display:flex;flex-direction:column;gap:5px;flex:1;min-width:0}
+.command-item-label strong{font-size:12px;color:#edf6fc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.command-item-label small{font-size:10px;color:#a5bacb;line-height:1.35}
+.command-rate,.command-gain,.command-delta{color:#66dcc0;text-align:right;font-size:17px;font-weight:800;white-space:nowrap}
+.command-rate small,.command-gain small,.command-delta small{display:block;color:#93aabd;font-size:9px;font-weight:600;margin-top:3px}
+.command-delta{color:#9abff4}
+.command-empty{font-size:12px;line-height:1.7;color:#a1b6c7;padding:12px 0 4px;margin:0}
+.command-actions>button{width:100%;display:flex;gap:12px;align-items:center;text-align:left;color:#dae9f1;border:1px solid #30495e;background:#192b3d;border-radius:10px;padding:13px;margin:10px 0;font-size:12px;font-weight:700}
+.command-actions>button svg:first-child{color:#67d4c4}
+.command-actions>button svg:last-child{margin-left:auto;color:#91b6c7}
+.command-actions>button:hover{background:#214057}
+.command-note{display:flex;align-items:flex-start;gap:10px;color:#a7bdca;font-size:11px;line-height:1.65;margin-top:20px;border-top:1px solid #30465b;padding-top:14px}
+.command-note svg{flex-shrink:0;color:#62d1bf;margin-top:2px}
+@media(max-width:1000px){.command-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.command-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.command-heading{align-items:start;flex-direction:column}.command-panel{padding:14px}.command-metrics>div{padding:13px}.command-metrics strong{font-size:24px}.command-heading h2{font-size:19px}.command-panel-head{flex-wrap:wrap}}
