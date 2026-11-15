@@ -212,3 +212,137 @@ body{background:radial-gradient(ellipse 65% 26% at 63% -5%,rgba(157,27,48,.19),t
 
 /* Phase 2 — recorded line movement */
 .line-history-section{margin-top:12px}.line-history-intro{display:flex;gap:12px;align-items:flex-start;padding:19px;background:#1d1520;border:1px solid #45303d;border-radius:12px;margin-bottom:16px;color:#ff8ba0}.line-history-intro strong{color:#fff;font-size:14px}.line-history-intro p{font-size:12px;line-height:1.6;color:#baaab7;margin:5px 0 0}.line-history-table-wrap{overflow-x:auto;border:1px solid #402d37;border-radius:12px;background:#15121a}.line-history-table{min-width:980px;width:100%}.line-history-table td{padding:15px 12px}.line-history-table td strong{display:block;color:#fff}.line-history-table td small{display:block;color:#94849b;margin-top:6px;font-size:10px}.movement-flat{color:#a0a0ad}.movement-change{color:#ff8097;font-weight:750}
+
+/* PropIQ Professional Edition — midnight navy / slate / teal
+   Presentation-only update. All research, odds and history logic remains unchanged. */
+:root {
+  color-scheme: dark;
+  --bg: #090f1b;
+  --side: #0c1422;
+  --panel: #121e2e;
+  --panel2: #19283a;
+  --stroke: #29394c;
+  --text: #f1f6fb;
+  --muted: #94a7bc;
+  --mint: #43c6b0;
+  --blue: #6e9cf4;
+}
+html,body { background: #090f1b; color: var(--text); }
+body { background: radial-gradient(ellipse 66% 34% at 70% -10%,rgba(42,115,138,.13),transparent 75%),#090f1b; }
+::selection {background:#246a72;color:#fff}
+.sidebar { background:#0c1422; border-right-color:#243448; }
+.logo { color:#f3f9ff; }
+.logo span {color:#58dbc8}
+.logo small,.side-label {color:#8198af}
+.logo-icon {background:#123d43;color:#61dfcd;border:1px solid #235f66}
+.nav {color:#a3b5ca}
+.nav:hover {background:#17283c;color:#f4fafb}
+.nav.active {background:#16373e;color:#64e0cd;box-shadow:inset 3px 0 #45c6b2}
+.nav b {color:#dce9f7}
+.sidebar-bottom {border-color:#28394d;color:#bdcada}
+.sidebar-bottom small {color:#8398af}
+.topbar {background:#0e1929;border-bottom-color:#29394d}
+.crumb {color:#b0c0d2}.crumb span {color:#60798f}
+.avatar {background:#1e334a;color:#dceafa;border-color:#375167}
+.content {color:#eaf1f8}
+.eyebrow,.sport-tabs button.chosen {color:#54d8c4}
+.heading h1,.section-title h2 {color:#f4f8fc;letter-spacing:-.7px}
+.heading p,.section-title p {color:#9fb1c5}
+.btn {border-radius:10px}
+.btn.primary {background:linear-gradient(135deg,#38bca8,#178e88);color:#061f25;box-shadow:0 5px 20px #0e82742c}
+.btn.primary:hover {background:linear-gradient(135deg,#67ddcc,#30b09e)}
+.btn.secondary {background:#1a2a3b;border-color:#365065;color:#d7e7f4}
+.btn.secondary:hover {background:#243a50}
+.sport-tabs {border-color:#293a4c}
+.sport-tabs button {color:#9aafc5}
+.sport-tabs button.chosen {border-color:#48c9b9}
+.tabs-note,.results {color:#90a6bc}
+.stat,.table-card,.premium-table {background:#121e2e;border-color:#29394c;box-shadow:0 8px 32px #0208133b}
+.stats-grid .stat:first-child {border-top:2px solid #43c6b0}
+.stat-top,.stat small {color:#9eafc2}
+.stat-top svg {color:#72b6c4}
+.stat strong,.premium-content .stat strong {color:#f3f8fc}
+.search,.select-wrap {background:#142335;color:#93abc1;border-color:#31465b}
+.search:focus-within,.select-wrap:focus-within {border-color:#49bdaf;box-shadow:0 0 0 3px #2da89c24}
+.search input {color:#f4f8fd}.search input::placeholder {color:#7e94aa}
+.select-wrap select,.manual-form select {color:#e6eef8}
+.select-wrap option {background:#17283b}
+thead {background:#1a2a3b}
+th,.sort-header {color:#a6bacb}
+.sort-header.sort-active {color:#5ed7c8}
+.sort-header:hover {color:#f7fbff}
+.sort-header:focus-visible {outline-color:#5cdac8}
+td {border-color:#29394a}
+tbody tr:hover {background:#1b3043}
+.player-name,.player-identity-text .player-name {color:#f2f7fa}
+.pill {color:#d4e1ee;background:#22354a;border-color:#385066}
+.pill.green {color:#78e1bc;background:#173d34;border-color:#32775e}
+.pill.purple {color:#c8b7ff;background:#302c4e;border-color:#605680}
+.pill.blue {color:#a1c6ff;background:#1c3553;border-color:#3c6591}
+.pill.amber {color:#f5cc8d;background:#443723;border-color:#6d5939}
+.pill.red {color:#ffacb7;background:#482532;border-color:#92505d}
+.rate.good {color:#66d5ad}
+.rate.mid {color:#e9c57c}
+.rate.low {color:#f2939f}
+.rate.dim {color:#8296a9}
+.bookmark {color:#879db5}.bookmark.saved {color:#60d9c9}
+.bookmark:hover,.iconbtn:hover {color:#f3faff}
+.player-avatar {background:linear-gradient(135deg,#244453,#142a3c);border-color:#3a6572;color:#c5f5ee}
+.player-avatar img {background:#1c3448}
+.footer-tip {background:#112c32;border-color:#27616b;color:#b6cdd4}
+.footer-tip svg,.footer-tip strong {color:#73dbc9}
+.notice {background:#193041;border-color:#326077;color:#c8e3f2}
+.drawer {background:#0c1726;border-left-color:#304559}
+.drawer-head h2,.drawer-sub strong {color:#f2f9fd}
+.hero-prop {background:linear-gradient(130deg,#134b4d,#162d46);border-color:#26767b;color:#e9fefa}
+.hero-prop span {color:#a1e4d8}.hero-prop small {color:#b6d9dd}
+.drawer-stats>div {background:#16283a;border-color:#2e4658}
+.drawer-stats b {color:#67ddc8}
+.drawer-sub,.game-list,.game-list>div {border-color:#293d50}
+.game-list>div span:first-child {color:#a8bbce}
+/* The result colors are intentionally semantic, independent of branding. */
+.bar.hit {background:#38c99a}
+.bar.push {background:#7e90a7}
+.bar.miss {background:#ee687a}
+.dialog {background:#122032;border-color:#385268}
+.dialog a,.guide a {color:#78dbca}
+.manual-form input,.manual-form select {background:#101c2b;border-color:#375066}
+.manual-form input:focus,.manual-form select:focus {border-color:#52cabb}
+.finder-panel {background:linear-gradient(115deg,#17343c,#111e2e 73%);border-color:#30636c}
+.finder-icon {background:#194b50;color:#6ee4d3}
+.finder-intro strong {color:#e5fbf8}.finder-intro p {color:#b0c8d5}
+.finder-controls label,.finder-disclaimer {color:#a7bdc9}
+.finder-controls select {background:#132a3a;border-color:#356072;color:#eaf5f8}
+.finder-count strong {color:#67dfca}
+.finder-disclaimer {border-color:#315567}
+.odds-compare-note {background:#172e39;border-color:#355d68;color:#c2dae1}
+.odds-compare-note svg {color:#69d5c5}
+.odds-compare-card {background:#121e2d;border-color:#2f4457}
+.odds-compare-player strong {color:#f0f8fb}.odds-compare-player small {color:#a1b4c8}
+.odds-compare-line {color:#dbe7f0}
+.odds-offer {background:#1b2d3f;border-color:#304a5f}
+.odds-offer.best {background:#153c37;border-color:#3a8d71}
+.odds-offer>span,.odds-offer>small,.odds-difference {color:#b4c5d2}
+.odds-offer>span b,.odds-offer.best>strong,.odds-difference strong {color:#72e3b5}
+.odds-offer>strong {color:#f4f9fc}
+.odds-view-research {background:#173b47;border-color:#356c77;color:#a5eee2}
+.odds-view-research:hover {background:#225461}
+.matchup-center-controls {background:#142537;border-color:#30495e}
+.matchup-center-controls h3 svg {color:#67d5c8}
+.matchup-center-controls p {color:#a9c0ce}
+.matchup-center-controls label {color:#c7d9e5}
+.matchup-center-controls select {background:#1b3042;border-color:#3b5b72;color:#edf6fb}
+.matchup-center-card {background:#132236;border-color:#2d4659}
+.matchup-center-person small,.matchup-center-card>p {color:#afc0ce}
+.matchup-center-metrics>div {background:#1a2e41;border-color:#30495b}
+.matchup-center-metrics small {color:#a8bbc9}
+.matchup-center-metrics strong {color:#f3f9fc}
+.line-history-intro {background:#15313b;border-color:#326371;color:#6ddacb}
+.line-history-intro strong {color:#f2fbfd}.line-history-intro p {color:#adc8d6}
+.line-history-table-wrap {background:#121f30;border-color:#30495c}
+.line-history-table td strong {color:#f4f8fd}.line-history-table td small {color:#92aabf}
+.movement-flat {color:#96aabd}.movement-change {color:#83c4f5}
+@media (max-width:700px) {
+  .stat,.table-card,.finder-panel,.matchup-center-card,.odds-compare-card {box-shadow:none}
+  .topbar {background:#0e1929}
+}
