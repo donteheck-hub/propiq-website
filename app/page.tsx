@@ -8,6 +8,7 @@ import {
   LayoutDashboard, Menu, Plus, RefreshCw, Search, ShieldCheck, Sparkles, ArrowLeftRight,
   SlidersHorizontal, Target, TrendingUp, X, Shield, History, Gauge, ArrowUpRight, Database
 } from 'lucide-react';
+import AccountAccess from './components/AccountAccess';
 import {
   analyze, currentSeason, defenseContext, type DefenseRow, gameOpponent, gameVenue, implied, logSeason, type LogRow, MARKETS, normalize, recentTrends, parseCsv, parseDefenseCsv, type Prop, seasonLabel, splitHistory, type Sport
 } from '../lib/props';
@@ -765,6 +766,7 @@ export default function Home() {
           </div>
 
           <div className="top-actions">
+            <AccountAccess />
             <button type="button" className="top-help" aria-label="Open help and getting started" title="Help & getting started" onClick={() => setHelp(true)}><CircleHelp size={19} /></button>
           </div>
         </header>
