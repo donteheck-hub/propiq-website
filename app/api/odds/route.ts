@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { MARKETS, type Prop, type Sport } from '../../../lib/props';
+import { mkdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
+import path from 'node:path';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,6 +18,12 @@ type Payload = {
 };
 type CacheEntry = { payload: Payload; centralDate: string };
 const cached: Partial<Record<Sport, CacheEntry>> = {};
+const attempted: Partial<Record<Sport, string>> = {};
+let storeReady = false;
+let storeError = '';
+let storeLoaded = false;
+let storeLoadTask: Promise<void> | null = null;
+let saveTask: Promise<void> = Promise.resolve();
 const inflight: Partial<Record<Sport, Promise<Payload>>> = {};
 let budgetDate = '';
 let spentToday = 0;
@@ -23,6 +31,71 @@ let pausedUntil = 0;
 let providerRemaining: number | null = null;
 let providerUsed: number | null = null;
 let providerLast: number | null = null;
+
+// A Railway Volume must be mounted at /data and ODDS_CACHE_DIR=/data/propiq
+// to preserve daily refresh decisions across builds, deployments and restarts.
+// Fail closed if missing: never silently consume the monthly quota on a restart.
+function storeFile(): string | null {
+  const directory = process.env.ODDS_CACHE_DIR?.trim();
+  return directory ? path.join(directory, 'odds-state.json') : null;
+}
+function validCacheEntry(value: unknown): value is CacheEntry {
+  if (!value || typeof value !== 'object') return false;
+  const e = value as Partial<CacheEntry>;
+  return typeof e.centralDate === 'string' && !!e.payload &&
+    Array.isArray(e.payload.props) && typeof e.payload.updatedAt === 'string';
+}
+async function initializeStore() {
+  if (storeLoaded) return;
+  if (storeLoadTask) return storeLoadTask;
+  storeLoadTask = (async () => {
+    const filename = storeFile();
+    if (!filename) { storeError = 'Set ODDS_CACHE_DIR to a persistent Railway volume path, e.g. /data/propiq.'; return; }
+    try {
+      await mkdir(path.dirname(filename), { recursive: true });
+      let loaded: Record<string, unknown> = {};
+      try { loaded = JSON.parse(await readFile(filename, 'utf8')) as Record<string, unknown>; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (validCacheEntry(loaded.NBA)) cached.NBA = loaded.NBA;
+      if (validCacheEntry(loaded.NFL)) cached.NFL = loaded.NFL;
+      if (loaded.attempted && typeof loaded.attempted === 'object') {
+        const a = loaded.attempted as Record<string, unknown>;
+        for (const sp of ['NBA', 'NFL'] as const) if (typeof a[sp] === 'string') attempted[sp] = a[sp];
+      }
+      if (typeof loaded.budgetDate === 'string') budgetDate = loaded.budgetDate;
+      if (typeof loaded.spentToday === 'number' && Number.isFinite(loaded.spentToday)) spentToday = Math.max(0, loaded.spentToday);
+      if (typeof loaded.pausedUntil === 'number' && Number.isFinite(loaded.pausedUntil)) pausedUntil = loaded.pausedUntil;
+      for (const [field, set] of [
+        ['providerRemaining', (n: number) => { providerRemaining = n; }],
+        ['providerUsed', (n: number) => { providerUsed = n; }],
+        ['providerLast', (n: number) => { providerLast = n; }],
+      ] as const) { const v = loaded[field]; if (typeof v === 'number' && Number.isFinite(v)) set(v); }
+      // Verify the volume is writable before ever calling the billed API.
+      const probe = path.join(path.dirname(filename), `.odds-write-check-${process.pid}`);
+      await writeFile(probe, 'ok');
+      await rename(probe, path.join(path.dirname(filename), `.odds-write-check-${process.pid}-ok`));
+      await unlink(path.join(path.dirname(filename), `.odds-write-check-${process.pid}-ok`));
+      storeReady = true; storeError = '';
+    } catch (e) { storeError = e instanceof Error ? e.message : 'Persistent volume unavailable'; }
+    finally { storeLoaded = true; }
+  })();
+  return storeLoadTask;
+}
+function persistStore(): Promise<void> {
+  const file = storeFile();
+  if (!storeReady || !file) return Promise.reject(new Error(storeError || 'Persistent odds storage unavailable'));
+  const snapshot = JSON.stringify({ NBA: cached.NBA, NFL: cached.NFL, attempted, budgetDate, spentToday, pausedUntil, providerRemaining, providerUsed, providerLast });
+  const task = saveTask.catch(() => undefined).then(async () => {
+    const tmp = `${file}.${process.pid}.tmp`;
+    await writeFile(tmp, snapshot, 'utf8');
+    await rename(tmp, file);
+  });
+  saveTask = task;
+  return task.catch((e) => { storeReady = false; storeError = e instanceof Error ? e.message : 'Persistent odds cache write failed'; throw e; });
+}
+
 
 function boundedInteger(value: string | undefined, fallback: number, min: number, max: number) {
   const n = Number(value);
@@ -61,6 +134,8 @@ function meta() {
   const settings = config();
   return {
     creditSaving: true,
+    persistentCache: storeReady,
+    cacheError: storeReady ? null : (storeError || 'Persistent odds cache unavailable'),
     refreshSchedule: 'Once per Central Time calendar day, on the first request after midnight',
     refreshTimezone: CENTRAL_TIMEZONE,
     centralDate: centralDate(),
@@ -167,12 +242,18 @@ export async function GET(req: NextRequest) {
   const sport: Sport = req.nextUrl.searchParams.get('sport') === 'NFL' ? 'NFL' : 'NBA';
   const key = process.env.ODDS_API_KEY?.trim();
   const now = Date.now();
+  await initializeStore();
   const entry = cached[sport];
   const send = (payload: Payload, stale: boolean, extra = '') => NextResponse.json({
     ...payload, stale, cached: true,
     notice: `${stale ? 'STALE ODDS — for reference only, not current prices. ' : 'Cached odds — no new API credits spent. '}${extra}${payload.notice}`,
     creditStatus: meta(),
   }, { headers: { 'Cache-Control': 'private, no-store' } });
+  if (!storeReady) return NextResponse.json({ props: entry?.payload.props ?? [], configured: !!key, stale: true, cached: !!entry, message: `Odds refresh paused: ${storeError}. Mount a Railway volume and set ODDS_CACHE_DIR to its path. No provider credits were used.`, creditStatus: meta() }, { status: 200, headers: { 'Cache-Control': 'private, no-store' } });
+  if (attempted[sport] === centralDate(now)) {
+    if (entry) return send(entry.payload, entry.centralDate !== centralDate(now), 'Daily attempt already recorded; no new API request. ');
+    return NextResponse.json({ props: [], configured: !!key, message: 'Today’s odds refresh was already attempted; avoiding repeated charges until next Central day.', creditStatus: meta() }, { headers: { 'Cache-Control': 'private, no-store' } });
+  }
   // Never spend new credits twice in the same Central Time calendar day
   // while this Railway process remains alive. The first visit after midnight
   // triggers that day's refresh; a separate scheduler is needed for an exact
@@ -191,6 +272,9 @@ export async function GET(req: NextRequest) {
   }
   try {
     if (!inflight[sport]) {
+      // Commit the refresh attempt to persistent storage BEFORE any paid request.
+      attempted[sport] = centralDate();
+      await persistStore();
       const task = load(sport, key);
       inflight[sport] = task;
       // Remove only this exact request; another visitor may already be awaiting it.
@@ -199,8 +283,10 @@ export async function GET(req: NextRequest) {
     }
     const payload = await inflight[sport]!;
     cached[sport] = { payload, centralDate: centralDate() };
+    await persistStore();
     return NextResponse.json({ ...payload, stale: false, cached: false, creditStatus: meta() }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch (error) {
+    try { await persistStore(); } catch { /* Fail closed on future requests. */ }
     if (entry && now - Date.parse(entry.payload.updatedAt) < settings.staleMs) return send(entry.payload, true, 'Provider request failed. ');
     const status = error instanceof ProviderError ? error.httpStatus : 502;
     return NextResponse.json({ props: [], configured: true, message: error instanceof Error ? error.message : 'Unable to load odds.', creditStatus: meta() }, { status });
