@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const result = (message: string, status = 200) => NextResponse.json({message}, {status});
-type StripeEvent = {id?: string; type?: string; created?: number; data?: {object?: Record<string, unknown>}};
+type StripeEvent = {id?: string; type?: string; created?: number; livemode?: boolean; data?: {object?: Record<string, unknown>}};
 
 function verified(body: string, header: string, secret: string) {
   const parts = header.split(',').map(p => p.trim());
@@ -26,9 +26,10 @@ export async function POST(request: NextRequest) {
   if (body.length > 1000000 || !verified(body, request.headers.get('stripe-signature') || '', secret)) return result('Invalid Stripe signature', 400);
   let event: StripeEvent;
   try { event = JSON.parse(body) as StripeEvent; } catch { return result('Invalid JSON', 400); }
-  if (!event.id || !/^evt_[a-zA-Z0-9]+$/.test(event.id)) return result('Invalid event',400);
+  if (!event.id || !/^evt_[a-zA-Z0-9]+$/.test(event.id) || !Number.isSafeInteger(event.created) || event.livemode !== false) return result('Invalid test event',400);
   const object = event.data?.object || {};
-  if (!event.type?.startsWith('customer.subscription.')) return result('Event ignored');
+  if (!['customer.subscription.created','customer.subscription.updated','customer.subscription.deleted'].includes(event.type || '')) return result('Event ignored');
+  if (object.object !== 'subscription') return result('Invalid subscription object',400);
   const meta = object.metadata as {user_id?: string;plan?:string}|undefined;
   const userId = meta?.user_id;
   const plan = meta?.plan;
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
       typeof subscriptionId !== 'string' || !subscriptionId.startsWith('sub_') || typeof customerId !== 'string' || !customerId.startsWith('cus_') || typeof status !== 'string') return result('Subscription event missing required metadata', 400);
   const itemData = object.items as { data?: {current_period_end?: number}[] } | undefined;
   const period = itemData?.data?.[0]?.current_period_end;
-  const at = new Date((event.created || Math.floor(Date.now()/1000))*1000).toISOString();
+  const at = new Date(Number(event.created) * 1000).toISOString();
   const payload = {
     user_id:userId, plan, status, stripe_subscription_id:subscriptionId, stripe_customer_id:customerId,
     current_period_end:typeof period==='number' ? new Date(period*1000).toISOString():null,
