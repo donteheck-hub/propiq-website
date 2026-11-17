@@ -88,7 +88,9 @@ export default function Home() {
   const [seasonView, setSeasonView] = useState<'current' | 'previous' | 'all'>('current');
   const [sortField, setSortField] = useState<SortField>('last10');
   const [sortDescending, setSortDescending] = useState(true);
-  const [tab, setTab] = useState<'dashboard' | 'explore' | 'saved' | 'finder' | 'odds' | 'matchups' | 'movement'>('dashboard');
+  const [tab, setTab] = useState<'dashboard' | 'explore' | 'saved' | 'finder' | 'odds' | 'matchups' | 'movement'>('explore');
+  const [membership, setMembership] = useState<'loading' | 'free' | 'pro' | 'elite'>('loading');
+  const [membershipMessage, setMembershipMessage] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [oddsSamples, setOddsSamples] = useState<OddsSample[]>([]);
@@ -230,6 +232,41 @@ export default function Home() {
       .catch(() => { if (active) void loadAccount(null); });
     return () => { active = false; window.removeEventListener('propiq-auth-change', onAccount); };
   }, [hydrated]);
+
+  // The server verifies the Supabase session and the current subscription record.
+  // Never use the plan name stored in browser storage as an entitlement.
+  useEffect(() => {
+    let active = true;
+    let requestNumber = 0;
+    const loadMembership = async () => {
+      const current = ++requestNumber;
+      if (active) setMembership('loading');
+      try {
+        const res = await fetch('/api/entitlements', { credentials: 'same-origin', cache: 'no-store' });
+        if (!res.ok) throw new Error('Membership verification unavailable.');
+        const data = await res.json() as {tier?: 'free' | 'pro' | 'elite'; notice?: string};
+        if (!active || current !== requestNumber) return;
+        setMembership(data.tier === 'elite' ? 'elite' : data.tier === 'pro' ? 'pro' : 'free');
+        setMembershipMessage(data.notice || '');
+      } catch {
+        if (!active || current !== requestNumber) return;
+        setMembership('free');
+        setMembershipMessage('Could not verify membership. Premium access is temporarily locked.');
+      }
+    };
+    const onChange = () => { void loadMembership(); };
+    window.addEventListener('propiq-auth-change', onChange);
+    void loadMembership();
+    return () => { active = false; window.removeEventListener('propiq-auth-change', onChange); };
+  }, []);
+
+  const hasPro = membership === 'pro' || membership === 'elite';
+  const hasElite = membership === 'elite';
+  const requiredMembership = (selectedTab: typeof tab): 'pro' | 'elite' | null =>
+    selectedTab === 'dashboard' || selectedTab === 'movement' ? 'elite' :
+    selectedTab === 'finder' || selectedTab === 'odds' || selectedTab === 'matchups' ? 'pro' : null;
+  const currentRequiredTier = requiredMembership(tab);
+  const lockedTab = currentRequiredTier !== null && (currentRequiredTier === 'elite' ? !hasElite : !hasPro);
 
   // Send updates after the user changes a bookmark; never send browser history
   // or imported game logs to the cloud.
@@ -782,7 +819,7 @@ export default function Home() {
         <div className="side-label">WORKSPACE</div>
 
         <button className={'nav ' + (tab === 'dashboard' ? 'active' : '')} onClick={() => { setTab('dashboard'); setMobileNavOpen(false); }}>
-          <Gauge size={18} /> Research Dashboard
+          <Gauge size={18} /> Research Dashboard <span className="tier-nav-label">ELITE</span>
         </button>
 
         <button
@@ -794,19 +831,19 @@ export default function Home() {
         </button>
 
         <button className={'nav ' + (tab === 'finder' ? 'active' : '')} onClick={() => { setTab('finder'); setSortDescending(true); setMobileNavOpen(false); }}>
-          <Sparkles size={18} /> Smart Finder
+          <Sparkles size={18} /> Smart Finder <span className="tier-nav-label">PRO</span>
         </button>
 
         <button className={'nav ' + (tab === 'matchups' ? 'active' : '')} onClick={() => { setTab('matchups'); setMobileNavOpen(false); }}>
-          <Shield size={18} /> Matchup Center
+          <Shield size={18} /> Matchup Center <span className="tier-nav-label">PRO</span>
         </button>
 
         <button className={'nav ' + (tab === 'movement' ? 'active' : '')} onClick={() => { setTab('movement'); setMobileNavOpen(false); }}>
-          <History size={18} /> Line History
+          <History size={18} /> Line History <span className="tier-nav-label">ELITE</span>
         </button>
 
         <button className={'nav ' + (tab === 'odds' ? 'active' : '')} onClick={() => { setTab('odds'); setMobileNavOpen(false); }}>
-          <ArrowLeftRight size={18} /> Odds Comparison
+          <ArrowLeftRight size={18} /> Odds Comparison <span className="tier-nav-label">PRO</span>
         </button>
 
         <button
@@ -864,6 +901,25 @@ export default function Home() {
 
 
           </div>
+
+          <div className="membership-strip" role="status">
+            <span>Membership: <strong>{membership === 'loading' ? 'Verifying…' : membership.toUpperCase()}</strong></span>
+            {membershipMessage && <span className="membership-strip-warning">{membershipMessage}</span>}
+            <button type="button" onClick={() => setPlansOpen(true)}>Compare plans</button>
+          </div>
+
+          {lockedTab ? (
+            <section className="premium-gate" aria-label="Membership required">
+              <ShieldCheck size={28} aria-hidden="true" />
+              <span className="eyebrow">{currentRequiredTier?.toUpperCase()} MEMBERSHIP</span>
+              <h2>{membership === 'loading' ? 'Verifying your membership…' : `Unlock ${tab === 'dashboard' ? 'Research Dashboard' : tab === 'movement' ? 'Line History' : tab === 'finder' ? 'Smart Finder' : tab === 'odds' ? 'Odds Comparison' : 'Matchup Center'}`}</h2>
+              <p>{membership === 'loading' ? 'Checking your account securely.' : `This research tool requires ${currentRequiredTier === 'elite' ? 'Elite' : 'Pro or Elite'} membership. Your access is verified against the Supabase subscription record.`}</p>
+              {membership !== 'loading' && <div className="premium-gate-actions">
+                <button className="btn" type="button" onClick={() => setPlansOpen(true)}>View membership plans</button>
+                <button className="btn secondary" type="button" onClick={() => setTab('explore')}>Use free Prop Explorer</button>
+              </div>}
+            </section>
+          ) : <>
 
           <div className="sport-tabs">
             <button
@@ -1425,6 +1481,7 @@ export default function Home() {
               Missing game logs do not mean a 0% chance of hitting. Partial samples and pushes can affect rates.
             </span>
           </div>
+          </>}
         </div>
       </main>
 
@@ -1754,7 +1811,7 @@ export default function Home() {
                 <BillingTestActions plan="elite" />
               </article>
             </div>
-            <p className="membership-note">Stripe test checkout is for development only. No real charges or paid access restrictions are active. Membership status is granted only after a verified Stripe webhook.</p>
+            <p className="membership-note">Stripe test checkout is for development only. No real charges are enabled. Premium research views require a verified, active test subscription.</p>
           </section>
         </div>
       )}

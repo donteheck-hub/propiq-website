@@ -432,3 +432,16 @@ button.command-trend-row:hover,button.command-compare-row:hover{background:#1b30
 .billing-test-btn:disabled{opacity:.55;cursor:not-allowed}
 .billing-test-note{font-size:11px;color:#afc5d1;line-height:1.45}
 .billing-test-error{font-size:11px;color:#ffaaa8;line-height:1.45}
+
+/* Phase 3 Update 5 — Verified membership interface */
+.tier-nav-label{margin-left:auto;font-size:9px;font-weight:850;letter-spacing:.65px;color:#85dccc;border:1px solid #326575;padding:3px 5px;border-radius:5px}
+.membership-strip{display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin:14px 0;color:#b3c7d5;font-size:12px}
+.membership-strip strong{color:#6ddbc5;letter-spacing:.4px}
+.membership-strip button{margin-left:auto;border:1px solid #376272;background:#162f40;color:#a0efdf;border-radius:8px;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer}
+.membership-strip-warning{color:#ffc7a7}
+.premium-gate{min-height:330px;margin:26px 0 40px;padding:45px 28px;border:1px solid #33586a;background:linear-gradient(140deg,#142b3a,#0d1a2a);border-radius:18px;display:flex;flex-direction:column;gap:15px;align-items:center;justify-content:center;text-align:center}
+.premium-gate>svg{color:#60d5c1}
+.premium-gate h2{font-size:24px;color:#effbff;margin:0}
+.premium-gate p{font-size:13px;color:#adc4d0;line-height:1.7;max-width:550px;margin:0}
+.premium-gate-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:11px;margin-top:9px}
+@media(max-width:600px){.membership-strip button{margin-left:0}.premium-gate{padding:35px 18px}.premium-gate h2{font-size:20px}}
