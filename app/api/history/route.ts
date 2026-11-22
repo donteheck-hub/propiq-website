@@ -289,7 +289,7 @@ function summarizeTrend(rows: LogRow[], trend: TrendRequest, season: number | 'a
   };
   return { player: trend.player, marketKey: trend.marketKey, line: trend.line,
     side: trend.side, opponent: trend.opponent || null,
-    last10: sample(10), last20: sample(20) };
+    last5: sample(5), last10: sample(10), last20: sample(20) };
 }
 
 const PRIVATE_HEADERS = { 'Cache-Control': 'private, no-store', Vary: 'Cookie' };

@@ -63,7 +63,10 @@ type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
 type SortField = 'last5' | 'last10' | 'average';
 
 type VerifiedTrendSample = { games: number; hits: number; pushes: number; misses: number; hitRate: number | null; average: number | null };
-type VerifiedTrend = { last10: VerifiedTrendSample; last20: VerifiedTrendSample };
+type VerifiedTrend = { last5?: VerifiedTrendSample; last10: VerifiedTrendSample; last20: VerifiedTrendSample };
+const FINDER_MAX_CANDIDATES = 120;
+const finderTrendKey = (p: Pick<Prop, 'player' | 'marketKey' | 'line' | 'side'>) =>
+  [normalize(p.player), p.marketKey, p.line, p.side].join('|');
 
 
 const profitOn100 = (odds: number) => odds > 0 ? odds : 10000 / Math.abs(odds);
@@ -117,6 +120,10 @@ export default function Home() {
   const [selected, setSelected] = useState<Prop | null>(null);
   const [opponentView, setOpponentView] = useState('all');
   const [verifiedTrend, setVerifiedTrend] = useState<VerifiedTrend | null>(null);
+  const [finderVerified, setFinderVerified] = useState<Map<string, VerifiedTrend>>(new Map());
+  const [finderStatus, setFinderStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [finderError, setFinderError] = useState('');
+  const [finderChecked, setFinderChecked] = useState(0);
   const [verifiedTrendStatus, setVerifiedTrendStatus] = useState<'idle' | 'loading' | 'verified' | 'error'>('idle');
   const [verifiedTrendMessage, setVerifiedTrendMessage] = useState('');
   const [defenseTeam, setDefenseTeam] = useState('');
@@ -592,33 +599,113 @@ export default function Home() {
     }).sort((a, b) => b.gain - a.gain || a.best.player.localeCompare(b.best.player));
   }, [sportProps, market, side, query]);
 
+  // Candidate list contains *only* live sportsbook lines. Never rank Finder
+  // with browser-imported historical game logs; server summaries are authoritative.
+  const finderCandidates = useMemo(() => {
+    const unique = new Map<string, Prop>();
+    for (const p of sportProps) {
+      if (p.source !== 'live' || !['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))) continue;
+      if (market !== 'all' && p.marketKey !== market) continue;
+      if (side !== 'all' && p.side !== side) continue;
+      if (sportsbook !== 'both' && normalizeBook(p.bookmaker) !== sportsbook) continue;
+      if (!`${p.player} ${p.event} ${p.bookmaker}`.toLowerCase().includes(query.toLowerCase())) continue;
+      const key = finderTrendKey(p);
+      if (!unique.has(key)) unique.set(key, p);
+    }
+    return [...unique.values()].sort((a, b) => a.player.localeCompare(b.player) || a.marketKey.localeCompare(b.marketKey) || a.line - b.line);
+  }, [sportProps, market, side, sportsbook, query]);
+  const finderScope = finderCandidates.slice(0, FINDER_MAX_CANDIDATES);
+  const finderScopeKey = finderScope.map(finderTrendKey).join(';');
+
+  useEffect(() => {
+    if (tab !== 'finder' || !hasPro) {
+      setFinderVerified(new Map()); setFinderStatus('idle'); setFinderError(''); setFinderChecked(0);
+      return;
+    }
+    const controller = new AbortController();
+    setFinderVerified(new Map()); setFinderError(''); setFinderChecked(0);
+    if (!finderScope.length) { setFinderStatus('ready'); return; }
+    setFinderStatus('loading');
+    const requestedSeason = seasonView === 'all' ? 'all' : seasonFor(sport);
+    const snapshot = finderScope.slice();
+    void (async () => {
+      try {
+        const verified = new Map<string, VerifiedTrend>();
+        for (let i = 0; i < snapshot.length; i += 20) {
+          const group = snapshot.slice(i, i + 20);
+          const response = await fetch('/api/history', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+            body: JSON.stringify({ mode: 'trend-summary', sport, season: requestedSeason,
+              trends: group.map(p => ({ player: p.player, marketKey: p.marketKey, line: p.line, side: p.side })) })
+          });
+          const payload = await response.json();
+          if (!response.ok) throw Error(typeof payload?.message === 'string' ? payload.message : `Finder request failed (HTTP ${response.status}).`);
+          if (!Array.isArray(payload?.trends) || payload.trends.length !== group.length) throw Error('Unexpected Finder response.');
+          for (let j = 0; j < group.length; j++) {
+            const trend = payload.trends[j] as VerifiedTrend;
+            if (!trend || typeof trend.last10?.games !== 'number' || typeof trend.last20?.games !== 'number') throw Error('Invalid server trend data.');
+            verified.set(finderTrendKey(group[j]), trend);
+          }
+          if (!controller.signal.aborted) setFinderChecked(Math.min(snapshot.length, i + group.length));
+        }
+        if (!controller.signal.aborted) { setFinderVerified(verified); setFinderStatus('ready'); }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setFinderVerified(new Map()); setFinderStatus('error');
+          setFinderError(error instanceof Error ? error.message : 'Finder history unavailable.');
+        }
+      }
+    })();
+    return () => controller.abort();
+  // Scope is a stable string of trend keys; changing a prop line changes the request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, hasPro, sport, seasonView, finderScopeKey]);
+
   const visible = useMemo(() => sportProps
+    .filter(p => {
+      if (tab === 'finder') {
+        if (finderStatus !== 'ready' || p.source !== 'live') return false;
+        const summary = finderVerified.get(finderTrendKey(p));
+        const sample = finderSample === 20 ? summary?.last20 : summary?.last10;
+        return !!sample && sample.games >= finderSample && sample.hitRate !== null && sample.hitRate >= finderThreshold;
+      }
+      return tab !== 'saved' || isSaved(p, saved);
+    })
     .filter(p =>
-      (tab !== 'saved' || isSaved(p, saved)) &&
-      (tab !== 'finder' || (p.source === 'live' && p.stats.games.length >= finderSample && (finderSample === 20 ? p.stats.hit20?.pct : p.stats.hit10?.pct) !== null && (finderSample === 20 ? (p.stats.hit20?.pct ?? -1) : (p.stats.hit10?.pct ?? -1)) >= finderThreshold)) &&
       (market === 'all' || p.marketKey === market) &&
       (side === 'all' || p.side === side) &&
       (sportsbook === 'both'
         ? ['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))
         : normalizeBook(p.bookmaker) === sportsbook) &&
       `${p.player} ${p.event} ${p.bookmaker}`.toLowerCase().includes(query.toLowerCase()) &&
-      (minHit === 0 || (p.stats.hit10?.total ?? 0) >= MIN_SAMPLE_FOR_HIGHLIGHT && (p.stats.hit10?.pct ?? -1) >= minHit)
+      (tab === 'finder' || minHit === 0 || (p.stats.hit10?.total ?? 0) >= MIN_SAMPLE_FOR_HIGHLIGHT && (p.stats.hit10?.pct ?? -1) >= minHit)
     )
+    .map(p => {
+      if (tab !== 'finder') return p;
+      const summary = finderVerified.get(finderTrendKey(p));
+      if (!summary) return p;
+      // Finder table values originate from the protected server calculation.
+      const rate = (item?: VerifiedTrendSample, n = 10) => item ? {
+        hits: item.hits, pushes: item.pushes, total: item.games,
+        pct: item.hitRate ?? 0, complete: item.games >= n
+      } : null;
+      return { ...p, stats: { ...p.stats, hit5: rate(summary.last5, 5),
+        hit10: rate(summary.last10, 10), hit20: rate(summary.last20, 20),
+        avg: summary.last10.average } };
+    })
     .sort((a, b) => {
       const metric = (p: typeof a) => tab === 'finder'
         ? (finderSample === 20 ? p.stats.hit20?.pct : p.stats.hit10?.pct)
-        : sortField === 'last5'
-        ? p.stats.hit5?.pct
-        : sortField === 'average'
-          ? p.stats.avg
-          : p.stats.hit10?.pct;
+        : sortField === 'last5' ? p.stats.hit5?.pct
+        : sortField === 'average' ? p.stats.avg : p.stats.hit10?.pct;
       const av = metric(a), bv = metric(b);
       if (av == null && bv == null) return a.player.localeCompare(b.player);
       if (av == null) return 1;
       if (bv == null) return -1;
       return (sortDescending ? bv - av : av - bv) || a.player.localeCompare(b.player);
     }),
-    [sportProps, tab, saved, market, side, sportsbook, query, minHit, sortField, sortDescending, finderThreshold, finderSample]
+    [sportProps, tab, saved, market, side, sportsbook, query, minHit, sortField, sortDescending, finderThreshold, finderSample, finderVerified, finderStatus]
   );
 
   useEffect(() => { setPage(1); }, [sport, tab, query, market, side, sportsbook, minHit, seasonView, finderThreshold, finderSample]);
@@ -1140,9 +1227,13 @@ export default function Home() {
                     <option value={90}>90% or higher</option>
                   </select>
                 </label>
-                <div className="finder-count"><strong>{visible.length}</strong><span>matching live props</span></div>
+                <div className="finder-count"><strong>{visible.length}</strong><span>server-verified matches</span></div>
               </div>
-              <p className="finder-disclaimer"><ShieldCheck size={14}/> A historical hit rate does not estimate the chance of a future result. No projections or expected-value claims are made.</p>
+              <p className="finder-disclaimer" role="status"><ShieldCheck size={14}/>
+                {finderStatus === 'loading' ? `Verifying trends on the server: ${finderChecked}/${finderScope.length} checked…` :
+                 finderStatus === 'error' ? `Server research unavailable: ${finderError}` :
+                 `Server-verified research across ${finderScope.length} candidate lines. ${finderCandidates.length > FINDER_MAX_CANDIDATES ? `Limited to the first ${FINDER_MAX_CANDIDATES} of ${finderCandidates.length} candidates; narrow your search or market to see more.` : ''} Historical hit rates are not future probabilities.`}
+              </p>
             </section>
           )}
           <div className="research-toolbar">
@@ -1465,12 +1556,12 @@ export default function Home() {
               <div className="empty">
                 <Search size={28} />
                 <h3>
-                  {loading ? 'Loading player props...' : tab === 'finder' ? 'No qualifying trends' : sportProps.length === 0 ? `No ${sport} sportsbook props available` : 'No props match these filters'}
+                  {loading ? 'Loading player props...' : tab === 'finder' && finderStatus === 'loading' ? 'Checking verified player trends...' : tab === 'finder' && finderStatus === 'error' ? 'Verified research unavailable' : tab === 'finder' ? 'No qualifying trends' : sportProps.length === 0 ? `No ${sport} sportsbook props available` : 'No props match these filters'}
                 </h3>
                 <p>
                   {loading
                     ? 'Checking available sportsbook lines.'
-                    : tab === 'finder' ? 'Try a lower hit-rate threshold, a different season, or Last 10. Missing history is not a missed bet.' : sportProps.length === 0 ? (notice || 'Sportsbooks may not have posted these player markets yet. Try refreshing nearer to kickoff; provider errors appear above.') : 'Try another filter, reset filters, or refresh live odds.'}
+                    : tab === 'finder' ? (finderStatus === 'error' ? finderError : finderStatus === 'loading' ? 'Server calculations are being checked.' : 'Try a lower hit-rate threshold, a different season, or Last 10. Missing history is not a missed bet.') : sportProps.length === 0 ? (notice || 'Sportsbooks may not have posted these player markets yet. Try refreshing nearer to kickoff; provider errors appear above.') : 'Try another filter, reset filters, or refresh live odds.'}
                 </p>
               </div>
             )}
