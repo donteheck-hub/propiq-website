@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { MARKETS, logSeason, normalize, validLogDate, type LogRow, type Sport } from '../../../lib/props';
+import { MARKETS, gameOpponent, logSeason, normalize, validLogDate, type LogRow, type Sport } from '../../../lib/props';
 import { verifiedMembership } from '../../../lib/server-entitlements';
 import type { MembershipTier } from '../../../lib/entitlements';
 
@@ -292,6 +292,31 @@ function summarizeTrend(rows: LogRow[], trend: TrendRequest, season: number | 'a
     last5: sample(5), last10: sample(10), last20: sample(20) };
 }
 
+// Matchup Center consumes only server-derived opponent aggregates, never browser-imported logs.
+function summarizeMatchup(rows: LogRow[], trend: TrendRequest, season: number | 'all') {
+  const matched = rows.filter(row => row.marketKey === trend.marketKey &&
+    normalize(row.player) === normalize(trend.player) &&
+    (season === 'all' || logSeason(row) === season));
+  const summarize = (games: LogRow[]) => {
+    const hits = games.filter(g => trend.side === 'Over' ? g.value > trend.line : g.value < trend.line).length;
+    const pushes = games.filter(g => g.value === trend.line).length;
+    return { games: games.length, hits, pushes,
+      average: games.length ? Math.round(games.reduce((sum, g) => sum + g.value, 0) / games.length * 10) / 10 : null };
+  };
+  const opponents = new Map<string, LogRow[]>();
+  for (const row of matched) {
+    const opponent = gameOpponent(row);
+    if (!opponent || opponent === 'UNKNOWN') continue;
+    const group = opponents.get(opponent) || [];
+    group.push(row);
+    opponents.set(opponent, group);
+  }
+  return { player: trend.player, marketKey: trend.marketKey, line: trend.line, side: trend.side,
+    all: summarize(matched),
+    opponents: [...opponents.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .slice(0, 100).map(([opponent, games]) => ({ opponent, ...summarize(games) })) };
+}
+
 const PRIVATE_HEADERS = { 'Cache-Control': 'private, no-store', Vary: 'Cookie' };
 
 export async function POST(request: NextRequest) {
@@ -312,7 +337,7 @@ export async function POST(request: NextRequest) {
 
     // Premium route: zero history or calculated results are returned before
     // entitlement verification. The existing basic history route remains intact.
-    if (input.mode === 'trend-summary') {
+    if (input.mode === 'trend-summary' || input.mode === 'matchup-summary') {
       if (!Array.isArray(input.trends) || input.trends.length < 1 || input.trends.length > 20 ||
           !input.trends.every(row => validTrend(row, sport))) {
         return NextResponse.json({ message: 'Provide 1-20 valid player trend requests.' }, { status: 400, headers: PRIVATE_HEADERS });
@@ -322,6 +347,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: 'An active Pro or Elite membership is required.' }, { status: 403, headers: PRIVATE_HEADERS });
       }
       const history = await getHistory(sport); // No Odds API call or quota usage.
+      if (input.mode === 'matchup-summary') {
+        return NextResponse.json({ sport, season, mode: 'matchup-summary', source: history.source,
+          updatedAt: history.updatedAt,
+          matchups: (input.trends as TrendRequest[]).map(t => summarizeMatchup(history.rows, t, season)),
+          disclaimer: 'Past results are not forecasts.' }, { headers: PRIVATE_HEADERS });
+      }
       return NextResponse.json({ sport, season, mode: 'trend-summary',
         source: history.source, updatedAt: history.updatedAt,
         // Last 20 and opponent-specific research is computed server-side.

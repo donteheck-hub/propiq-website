@@ -65,6 +65,11 @@ type SortField = 'last5' | 'last10' | 'average';
 type VerifiedTrendSample = { games: number; hits: number; pushes: number; misses: number; hitRate: number | null; average: number | null };
 type VerifiedTrend = { last5?: VerifiedTrendSample; last10: VerifiedTrendSample; last20: VerifiedTrendSample };
 const FINDER_MAX_CANDIDATES = 120;
+type MatchupSummary = {
+  all: { games: number; hits: number; pushes: number; average: number | null };
+  opponents: Array<{ opponent: string; games: number; hits: number; pushes: number; average: number | null }>;
+};
+const MATCHUP_MAX_CANDIDATES = 120;
 const finderTrendKey = (p: Pick<Prop, 'player' | 'marketKey' | 'line' | 'side'>) =>
   [normalize(p.player), p.marketKey, p.line, p.side].join('|');
 
@@ -117,6 +122,9 @@ export default function Home() {
   const [finderThreshold, setFinderThreshold] = useState(70);
   const [finderSample, setFinderSample] = useState<10 | 20>(10);
   const [matchupOpponent, setMatchupOpponent] = useState('all');
+  const [matchupVerified, setMatchupVerified] = useState<Map<string, MatchupSummary>>(new Map());
+  const [matchupStatus, setMatchupStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [matchupError, setMatchupError] = useState('');
   const [selected, setSelected] = useState<Prop | null>(null);
   const [opponentView, setOpponentView] = useState('all');
   const [verifiedTrend, setVerifiedTrend] = useState<VerifiedTrend | null>(null);
@@ -764,28 +772,78 @@ export default function Home() {
 
   const selectedTrends = useMemo(() => selected && selectedStats
     ? recentTrends(selectedStats.games, selected) : null, [selected, selectedStats]);
-  // Opponents are taken only from actual historical game logs. We deliberately
-  // do not infer today's opposing team from a matchup string with no roster ID.
+  // Matchup aggregates come from the verified server, not imported/browser game logs.
   const matchupCandidates = useMemo(() => {
     const seen = new Set<string>();
-    return visible.filter(p => {
-      if (!p.stats.games.length) return false;
-      const key = [p.sport, normalize(p.player), p.marketKey, p.side, p.line].join('|');
+    return sportProps.filter(p => {
+      if (p.source !== 'live' || !['draftkings', 'fanduel'].includes(normalizeBook(p.bookmaker))) return false;
+      if (market !== 'all' && p.marketKey !== market) return false;
+      if (side !== 'all' && p.side !== side) return false;
+      if (sportsbook !== 'both' && normalizeBook(p.bookmaker) !== sportsbook) return false;
+      if (!`${p.player} ${p.event} ${p.bookmaker}`.toLowerCase().includes(query.toLowerCase())) return false;
+      const key = finderTrendKey(p);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    });
-  }, [visible]);
-  const matchupOpponents = useMemo(() => [...new Set(matchupCandidates.flatMap(p =>
-    p.stats.games.map(g => gameOpponent(g)).filter((s): s is string => !!s && s !== 'Unknown')
-  ))].sort(), [matchupCandidates]);
-  const matchupCards = useMemo(() => matchupCandidates.map(p => {
-    const games = matchupOpponent === 'all' ? p.stats.games : p.stats.games.filter(g => gameOpponent(g) === matchupOpponent);
-    const hits = games.filter(g => p.side === 'Over' ? g.value > p.line : g.value < p.line).length;
-    const pushes = games.filter(g => g.value === p.line).length;
-    const average = games.length ? games.reduce((sum, g) => sum + g.value, 0) / games.length : null;
-    return { prop: p, games: games.length, hits, pushes, average };
-  }).filter(x => x.games > 0).sort((a, b) => b.games - a.games || a.prop.player.localeCompare(b.prop.player)), [matchupCandidates, matchupOpponent]);
+    }).sort((a, b) => a.player.localeCompare(b.player) || a.marketKey.localeCompare(b.marketKey) || a.line - b.line);
+  }, [sportProps, market, side, sportsbook, query]);
+  const matchupScope = matchupCandidates.slice(0, MATCHUP_MAX_CANDIDATES);
+  const matchupScopeKey = matchupScope.map(finderTrendKey).join(';');
+
+  useEffect(() => {
+    if (tab !== 'matchups' || !hasPro) {
+      setMatchupVerified(new Map()); setMatchupStatus('idle'); setMatchupError('');
+      return;
+    }
+    const controller = new AbortController();
+    const snapshot = matchupScope.slice();
+    setMatchupVerified(new Map()); setMatchupError('');
+    if (!snapshot.length) { setMatchupStatus('ready'); return; }
+    setMatchupStatus('loading');
+    void (async () => {
+      try {
+        const verified = new Map<string, MatchupSummary>();
+        for (let i = 0; i < snapshot.length; i += 20) {
+          const batch = snapshot.slice(i, i + 20);
+          const res = await fetch('/api/history', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'matchup-summary', sport,
+              season: seasonView === 'all' ? 'all' : seasonFor(sport),
+              trends: batch.map(p => ({ player: p.player, marketKey: p.marketKey, line: p.line, side: p.side })) })
+          });
+          const payload = await res.json();
+          if (!res.ok) throw Error(typeof payload?.message === 'string' ? payload.message : `Matchup API error (${res.status}).`);
+          if (!Array.isArray(payload?.matchups) || payload.matchups.length !== batch.length) throw Error('Invalid server matchup response.');
+          for (let j = 0; j < batch.length; j++) {
+            const summary = payload.matchups[j] as MatchupSummary;
+            if (typeof summary?.all?.games !== 'number' || !Array.isArray(summary.opponents)) throw Error('Invalid matchup statistics.');
+            verified.set(finderTrendKey(batch[j]), summary);
+          }
+        }
+        if (!controller.signal.aborted) { setMatchupVerified(verified); setMatchupStatus('ready'); }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setMatchupVerified(new Map()); setMatchupStatus('error');
+          setMatchupError(error instanceof Error ? error.message : 'Matchup verification failed.');
+        }
+      }
+    })();
+    return () => controller.abort();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, hasPro, sport, seasonView, matchupScopeKey]);
+
+  const matchupOpponents = useMemo(() => [...new Set([...matchupVerified.values()].flatMap(item =>
+    item.opponents.map(entry => entry.opponent)))].sort(), [matchupVerified]);
+  const matchupCards = useMemo(() => {
+    if (matchupStatus !== 'ready') return [];
+    return matchupScope.flatMap(prop => {
+      const summary = matchupVerified.get(finderTrendKey(prop));
+      const values = matchupOpponent === 'all' ? summary?.all : summary?.opponents.find(o => o.opponent === matchupOpponent);
+      return values && values.games > 0 ? [{ prop, ...values }] : [];
+    }).sort((a, b) => b.games - a.games || a.prop.player.localeCompare(b.prop.player));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchupStatus, matchupVerified, matchupOpponent, matchupScopeKey]);
 
   const comparison = useMemo(() => compareIds.map(id => analyzed.find(p => p.id === id))
     .filter((p): p is (typeof analyzed)[number] => !!p && p.sport === sport), [compareIds, analyzed, sport]);
@@ -1367,7 +1425,11 @@ export default function Home() {
                   </select>
                 </label>
               </div>
-              {matchupCards.length ? (
+              {matchupStatus === 'loading' && <p className="finder-disclaimer">Verifying opponent records on the server…</p>}
+              {matchupStatus === 'error' && <p role="alert" className="finder-disclaimer">Server matchup research unavailable: {matchupError}</p>}
+              {matchupStatus === 'ready' && matchupCandidates.length > MATCHUP_MAX_CANDIDATES &&
+                <p className="finder-disclaimer">Showing the first {MATCHUP_MAX_CANDIDATES} candidate props. Narrow the filters to research more.</p>}
+              {matchupStatus === 'ready' && matchupCards.length ? (
                 <div className="matchup-center-grid">
                   {matchupCards.slice(0, 80).map(({prop, games, hits, pushes, average}) => (
                     <article className="matchup-center-card" key={prop.id}>
@@ -1388,9 +1450,9 @@ export default function Home() {
                     </article>
                   ))}
                 </div>
-              ) : <div className="empty"><h3>No recorded matchups found</h3><p>Try another opponent or season. If game logs are missing, the historical feed must be restored first.</p></div>}
+              ) : matchupStatus === 'ready' ? <div className="empty"><h3>No recorded matchups found</h3><p>Try another opponent or season. If game logs are missing, the historical feed must be restored first.</p></div> : null}
               {matchupCards.length > 80 && <p className="muted smaller">Showing 80 matching props. Use search or market filters to narrow results.</p>}
-              <p className="finder-disclaimer"><ShieldCheck size={14}/> Results describe historical games, not a forecast. Current opponent is not inferred from event titles. Team defense rankings require the optional sourced CSV import.</p>
+              <p className="finder-disclaimer"><ShieldCheck size={14}/> Server-verified results describe historical games, not a forecast. Current opponent is not inferred from event titles. Team defense rankings require the optional sourced CSV import.</p>
             </section>
           ) : tab === 'odds' ? (
             <section className="odds-compare-area" aria-label="Sportsbook odds comparison">
