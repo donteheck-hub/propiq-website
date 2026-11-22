@@ -62,6 +62,7 @@ type LiveStatus = 'loading' | 'live' | 'cached' | 'stale' | 'unavailable';
 type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
 type SortField = 'last5' | 'last10' | 'average';
 
+type SecureOddsComparison = { best: Prop; other: Prop; gain: number };
 type VerifiedTrendSample = { games: number; hits: number; pushes: number; misses: number; hitRate: number | null; average: number | null };
 type VerifiedTrend = { last5?: VerifiedTrendSample; last10: VerifiedTrendSample; last20: VerifiedTrendSample };
 const FINDER_MAX_CANDIDATES = 120;
@@ -121,6 +122,9 @@ export default function Home() {
   const [minHit, setMinHit] = useState(0);
   const [finderThreshold, setFinderThreshold] = useState(70);
   const [finderSample, setFinderSample] = useState<10 | 20>(10);
+  const [secureComparisons, setSecureComparisons] = useState<SecureOddsComparison[]>([]);
+  const [comparisonStatus, setComparisonStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [comparisonError, setComparisonError] = useState('');
   const [matchupOpponent, setMatchupOpponent] = useState('all');
   const [matchupVerified, setMatchupVerified] = useState<Map<string, MatchupSummary>>(new Map());
   const [matchupStatus, setMatchupStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -585,27 +589,46 @@ export default function Home() {
 
   // Only compare identical, live outcomes across distinct sportsbooks.
   // Do not compare the same player at different lines or for different games.
-  const oddsComparisons = useMemo(() => {
-    const groups = new Map<string, Map<string, Prop>>();
-    for (const prop of sportProps) {
-      const book = normalizeBook(prop.bookmaker);
-      if (prop.source !== 'live' || !['draftkings', 'fanduel'].includes(book) ||
-          !Number.isFinite(prop.odds) || prop.odds === 0) continue;
-      if ((market !== 'all' && prop.marketKey !== market) ||
-          (side !== 'all' && prop.side !== side) ||
-          !`${prop.player} ${prop.event} ${prop.bookmaker}`.toLowerCase().includes(query.toLowerCase())) continue;
-      const key = [prop.sport, normalize(prop.player), normalize(prop.event), prop.commence,
-        prop.marketKey, prop.side, prop.line].join('|');
-      if (!groups.has(key)) groups.set(key, new Map());
-      const books = groups.get(key)!;
-      const old = books.get(book);
-      if (!old || prop.odds > old.odds) books.set(book, prop);
+  // The server owns comparison grouping and profitability calculations. Local filters
+  // only narrow the server-authorized rows; browser-supplied props cannot be ranked.
+  useEffect(() => {
+    if (!((tab === 'odds' && hasPro) || (tab === 'dashboard' && hasElite))) {
+      setSecureComparisons([]); setComparisonStatus('idle'); setComparisonError('');
+      return;
     }
-    return [...groups.values()].filter(books => books.size >= 2).map(books => {
-      const offers = [...books.values()].sort((a, b) => b.odds - a.odds);
-      return { best: offers[0], other: offers[1], gain: profitOn100(offers[0].odds) - profitOn100(offers[1].odds) };
-    }).sort((a, b) => b.gain - a.gain || a.best.player.localeCompare(b.best.player));
-  }, [sportProps, market, side, query]);
+    const controller = new AbortController();
+    setSecureComparisons([]); setComparisonError(''); setComparisonStatus('loading');
+    void (async () => {
+      try {
+        const response = await fetch(`/api/odds/compare?sport=${sport}`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal
+        });
+        const data = await response.json() as { comparisons?: unknown; error?: string; message?: string };
+        if (!response.ok || !Array.isArray(data.comparisons)) {
+          throw new Error(data.error || data.message || 'Comparison verification failed.');
+        }
+        const rows = data.comparisons.filter((v): v is SecureOddsComparison => {
+          if (!v || typeof v !== 'object') return false;
+          const r = v as Partial<SecureOddsComparison>;
+          return validLiveProp(r.best, sport) && validLiveProp(r.other, sport) &&
+            typeof r.gain === 'number' && Number.isFinite(r.gain) && r.gain >= 0;
+        });
+        if (!controller.signal.aborted) { setSecureComparisons(rows); setComparisonStatus('ready'); }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setSecureComparisons([]); setComparisonStatus('error');
+          setComparisonError(error instanceof Error ? error.message : 'Comparison verification failed.');
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [tab, hasPro, hasElite, sport]);
+
+  const oddsComparisons = useMemo(() => secureComparisons.filter(({ best, other }) =>
+    (market === 'all' || best.marketKey === market) &&
+    (side === 'all' || best.side === side) &&
+    `${best.player} ${best.event} ${best.bookmaker} ${other.bookmaker}`.toLowerCase().includes(query.toLowerCase())
+  ), [secureComparisons, market, side, query]);
 
   // Candidate list contains *only* live sportsbook lines. Never rank Finder
   // with browser-imported historical game logs; server summaries are authoritative.
@@ -1482,7 +1505,7 @@ export default function Home() {
                     </article>
                   ))}
                 </div>
-              ) : <div className="empty"><h3>No matching prices at identical lines</h3><p>Both sportsbooks must offer the same player, game, market, direction, and line. Try resetting market and direction filters or refreshing live odds.</p></div>}
+              ) : <div className="empty"><h3>{comparisonStatus === 'loading' ? 'Verifying sportsbook prices…' : comparisonStatus === 'error' ? 'Verified comparison unavailable' : 'No matching prices at identical lines'}</h3><p>{comparisonStatus === 'loading' ? 'Calculating exact-line differences on the protected server.' : comparisonStatus === 'error' ? comparisonError : 'Both sportsbooks must offer the same player, game, market, direction, and line. Try resetting market and direction filters or refreshing live odds.'}</p></div>}
               {oddsComparisons.length > 100 && <p className="muted smaller">Showing the 100 largest differences. Narrow your search to see other comparisons.</p>}
             </section>
           ) : (<>
