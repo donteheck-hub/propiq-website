@@ -12,11 +12,12 @@ function filterHistory(payload: HistoryResult, players: string[], season: number
   const matching = payload.rows.filter(row => names.has(normalize(row.player.trim())) && (season === 'all' || logSeason(row) === season));
   // Only the Elite tier may retrieve unrestricted player-stat history.
   // Free keeps Last 5/10; Pro keeps Last 20 for the historical trend finder.
-  // Cap independently by player, stat, and season to preserve each stat's timeline.
+  // Cap by player and market across the full requested period. A query for
+  // all seasons must not multiply the Free/Pro allowance by season count.
   const limit = tier === 'elite' ? Number.POSITIVE_INFINITY : tier === 'pro' ? 20 : 10;
   const grouped = new Map<string, LogRow[]>();
   for (const row of matching) {
-    const key = `${normalize(row.player)}|${row.marketKey}|${logSeason(row)}`;
+    const key = `${normalize(row.player)}|${row.marketKey}`;
     const group = grouped.get(key);
     if (group) group.push(row);
     else grouped.set(key, [row]);
@@ -39,7 +40,8 @@ function filterHistory(payload: HistoryResult, players: string[], season: number
 // A browser GET never dumps the entire dataset.
 export async function GET(request: NextRequest) {
   const sport: Sport = request.nextUrl.searchParams.get('sport') === 'NFL' ? 'NFL' : 'NBA';
-  return NextResponse.json({ rows: [], source: sport, message: 'Use POST with {sport, players:[...]}; full history is never sent to the browser.' });
+  return NextResponse.json({ rows: [], source: sport, message: 'Use POST with {sport, players:[...]}; full history is never sent to the browser.' },
+    { headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } });
 }
 
 // Pro/Elite research is calculated on trusted server-side game logs. Browser
@@ -105,14 +107,14 @@ const PRIVATE_HEADERS = { 'Cache-Control': 'private, no-store', Vary: 'Cookie' }
 export async function POST(request: NextRequest) {
   try {
     const contentLength = Number(request.headers.get('content-length') || 0);
-    if (contentLength > 32_768) return NextResponse.json({ message: 'Request is too large.' }, { status: 413 });
+    if (contentLength > 32_768) return NextResponse.json({ message: 'Request is too large.' }, { status: 413, headers: PRIVATE_HEADERS });
     const text = await request.text();
-    if (text.length > 32_768) return NextResponse.json({ message: 'Request is too large.' }, { status: 413 });
+    if (text.length > 32_768) return NextResponse.json({ message: 'Request is too large.' }, { status: 413, headers: PRIVATE_HEADERS });
     let body: unknown;
-    try { body = JSON.parse(text); } catch { return NextResponse.json({ message: 'Malformed JSON' }, { status: 400 }); }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ message: 'Invalid JSON' }, { status: 400 });
+    try { body = JSON.parse(text); } catch { return NextResponse.json({ message: 'Malformed JSON' }, { status: 400, headers: PRIVATE_HEADERS }); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return NextResponse.json({ message: 'Invalid JSON' }, { status: 400, headers: PRIVATE_HEADERS });
     const input = body as { mode?: unknown; sport?: unknown; players?: unknown; season?: unknown; trends?: unknown };
-    if (input.sport !== 'NBA' && input.sport !== 'NFL') return NextResponse.json({ message: 'sport must be NBA or NFL' }, { status: 400 });
+    if (input.sport !== 'NBA' && input.sport !== 'NFL') return NextResponse.json({ message: 'sport must be NBA or NFL' }, { status: 400, headers: PRIVATE_HEADERS });
     const sport = input.sport;
     const season: number | 'all' = input.season === 'all' ? 'all' :
       typeof input.season === 'number' && Number.isInteger(input.season) && input.season >= 2000 && input.season <= 2100
@@ -143,11 +145,11 @@ export async function POST(request: NextRequest) {
         disclaimer: 'Historical observed hit rates are not future win probabilities.'
       }, { headers: PRIVATE_HEADERS });
     }
-    if (input.mode !== undefined) return NextResponse.json({ message: 'Unsupported history mode.' }, { status: 400 });
+    if (input.mode !== undefined) return NextResponse.json({ message: 'Unsupported history mode.' }, { status: 400, headers: PRIVATE_HEADERS });
 
     if (!Array.isArray(input.players) || input.players.length < 1 || input.players.length > 120 ||
         input.players.some(p => typeof p !== 'string' || p.length > 100 || !p.trim())) {
-      return NextResponse.json({ message: 'Provide 1-120 valid player names' }, { status: 400 });
+      return NextResponse.json({ message: 'Provide 1-120 valid player names' }, { status: 400, headers: PRIVATE_HEADERS });
     }
     const players = [...new Set(input.players as string[])];
     const membership = await verifiedMembership(request);

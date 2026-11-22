@@ -15,7 +15,6 @@ import {
 } from '../lib/props';
 
 const STORAGE_KEY = 'prop-iq-v2';
-const ODDS_HISTORY_KEY = 'prop-iq-odds-history-v1';
 type OddsSample = { sport: Sport; player: string; event: string; commence: string; market: string; marketKey: string; side: 'Over'|'Under'; bookmaker: string; line: number; odds: number; observedAt: string };
 const sampleKey = (p: Pick<OddsSample, 'sport'|'player'|'event'|'commence'|'marketKey'|'side'|'bookmaker'>) => [p.sport, normalize(p.player), normalize(p.event), p.commence, p.marketKey, p.side, normalize(p.bookmaker)].join('|');
 // A bookmaker's line and odds can change. Neither should invalidate a bookmark.
@@ -108,6 +107,8 @@ export default function Home() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [props, setProps] = useState<Prop[]>([]);
   const [oddsSamples, setOddsSamples] = useState<OddsSample[]>([]);
+  const [lineHistoryStatus, setLineHistoryStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [lineHistoryError, setLineHistoryError] = useState('');
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [autoLogs, setAutoLogs] = useState<LogRow[]>([]);
   const [historyStatus, setHistoryStatus] = useState('Loading historical game data...');
@@ -191,14 +192,6 @@ export default function Home() {
       console.error('Unable to restore saved research:', error);
     }
 
-    try {
-      const savedHistory = JSON.parse(localStorage.getItem(ODDS_HISTORY_KEY) || '[]');
-      if (Array.isArray(savedHistory)) setOddsSamples(savedHistory.filter((row: OddsSample) =>
-        row && (row.sport === 'NBA' || row.sport === 'NFL') &&
-        Number.isFinite(row.line) && Number.isFinite(row.odds) &&
-        typeof row.observedAt === 'string' && !Number.isNaN(Date.parse(row.observedAt))
-      ).slice(-12000));
-    } catch (error) { console.warn('Could not restore odds history', error); }
     setHydrated(true);
   }, []);
 
@@ -221,12 +214,6 @@ export default function Home() {
       console.error('Unable to save research:', error);
     }
   }, [hydrated, props, logs, saved, defenseRows, cloudAccount]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    try { localStorage.setItem(ODDS_HISTORY_KEY, JSON.stringify(oddsSamples)); }
-    catch (error) { console.warn('Could not save odds history', error); }
-  }, [hydrated, oddsSamples]);
 
   // Account bookmarks use Supabase with per-user RLS. Browser bookmarks remain
   // separate and are never silently uploaded to a different person's account.
@@ -368,26 +355,6 @@ export default function Home() {
         ),
         ...liveProps
       ]);
-
-      // Capture real provider snapshots only. Reopening cached data with the
-      // same provider timestamp does not create fictitious movement.
-      if (!data.stale && data.updatedAt && !Number.isNaN(Date.parse(data.updatedAt))) {
-        const observedAt: string = new Date(data.updatedAt).toISOString();
-        const newSamples: OddsSample[] = liveProps.filter(p => p.source === 'live' &&
-          Number.isFinite(p.line) && Number.isFinite(p.odds)).slice(0, 1200).map(p => ({
-          sport: p.sport, player: p.player, event: p.event, commence: p.commence,
-          market: p.market, marketKey: p.marketKey, side: p.side,
-          bookmaker: p.bookmaker, line: p.line, odds: p.odds, observedAt
-        }));
-        setOddsSamples(previous => {
-          const oldest = Date.now() - 30 * 86400000;
-          const unique = new Map<string, OddsSample>();
-          for (const row of [...previous, ...newSamples]) {
-            if (Date.parse(row.observedAt) >= oldest) unique.set(`${sampleKey(row)}|${row.observedAt}`, row);
-          }
-          return [...unique.values()].sort((a, b) => a.observedAt.localeCompare(b.observedAt)).slice(-12000);
-        });
-      }
 
       setStatus(data.stale ? 'stale' : data.cached ? 'cached' : 'live');
       setOddsCoverage(typeof data.availableEvents === 'number' ? `Odds coverage: ${data.eventsChecked} of ${data.availableEvents} upcoming games checked. ${Array.isArray(data.warnings) && data.warnings.length ? `${data.warnings.length} provider error(s).` : ''}` : '');
@@ -980,6 +947,37 @@ export default function Home() {
   }
 
 
+  // Only server-verified Elite snapshots may power the paid movement views.
+  // Existing legacy browser snapshots are intentionally neither uploaded nor displayed.
+  useEffect(() => {
+    if (!hasElite || (tab !== 'movement' && tab !== 'dashboard')) {
+      setOddsSamples([]); setLineHistoryStatus('idle'); setLineHistoryError('');
+      return;
+    }
+    const controller = new AbortController();
+    setOddsSamples([]); setLineHistoryStatus('loading'); setLineHistoryError('');
+    void (async () => {
+      try {
+        const response = await fetch(`/api/research/line-history?sport=${sport}`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal
+        });
+        const data = await response.json() as { samples?: OddsSample[]; error?: string };
+        if (!response.ok || !Array.isArray(data.samples)) throw new Error(data.error || 'Line history unavailable.');
+        if (!controller.signal.aborted) {
+          setOddsSamples(data.samples);
+          setLineHistoryStatus('ready');
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLineHistoryStatus('error');
+          setLineHistoryError(error instanceof Error ? error.message : 'Could not verify line history.');
+          setOddsSamples([]);
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [hasElite, tab, sport, lastUpdated]);
+
   const movementRows = useMemo(() => {
     const byOffer = new Map<string, OddsSample[]>();
     for (const sample of oddsSamples) {
@@ -1432,9 +1430,11 @@ export default function Home() {
               <div className="line-history-intro">
                 <History size={19}/>
                 <div><strong>Recorded odds snapshots</strong>
-                <p>Saved only when this browser receives a new provider data timestamp. Showing up to 30 days of available observations (maximum 12,000 stored records). No earlier changes can be reconstructed.</p></div>
+                <p>Saved on the secure Railway volume when an Elite user opens this view and a newer cached provider timestamp is available. Up to 30 days of observations (maximum 12,000 records). Earlier movements cannot be reconstructed.</p></div>
               </div>
-              {movementRows.length ? (
+              {lineHistoryStatus === 'loading' && <p role="status">Loading Elite line history…</p>}
+              {lineHistoryStatus === 'error' && <p className="history-alert" role="alert">{lineHistoryError}</p>}
+              {lineHistoryStatus === 'ready' && movementRows.length ? (
                 <div className="line-history-table-wrap"><table className="line-history-table"><thead><tr><th>PLAYER / MATCHUP</th><th>MARKET</th><th>FIRST RECORDED</th><th>LATEST RECORDED</th><th>LINE CHANGE</th><th>ODDS CHANGE</th><th>SAMPLES</th></tr></thead><tbody>
                   {movementRows.map(({first,last,lineDelta,oddsDelta,count}) => (
                     <tr key={sampleKey(last)}>
@@ -1448,8 +1448,8 @@ export default function Home() {
                     </tr>
                   ))}
                 </tbody></table></div>
-              ) : <div className="empty"><History size={28}/><h3>No line history recorded yet</h3><p>The first successful odds load creates a baseline. A later, newly timestamped snapshot is needed to show actual movement.</p></div>}
-              <p className="finder-disclaimer"><ShieldCheck size={14}/> Browser-only history: not shared across devices or users, and clearing browser data deletes it. This is not a real-time line movement feed.</p>
+              ) : lineHistoryStatus === 'ready' ? <div className="empty"><History size={28}/><h3>No line history recorded yet</h3><p>The first Elite request stores a baseline from the latest cached odds. A later, newly timestamped provider snapshot is needed to show movement.</p></div> : null}
+              <p className="finder-disclaimer"><ShieldCheck size={14}/> Server-stored snapshots are shared across your Elite sessions, and only Elite accounts can request them. Older browser-only snapshots are not migrated. Not a real-time line movement feed.</p>
             </section>
           ) : tab === 'matchups' ? (
             <section className="matchup-center" aria-label="Player matchup research">
