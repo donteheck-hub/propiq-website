@@ -63,6 +63,7 @@ type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
 type SortField = 'last5' | 'last10' | 'average';
 
 type SecureOddsComparison = { best: Prop; other: Prop; gain: number };
+type EliteDashboardData = { coverage: { live: number; uniquePlayers: number; withHistory: number; fullTen: number }; trends: Array<{ prop: Prop; hits: number; games: number; rate: number }> };
 type VerifiedTrendSample = { games: number; hits: number; pushes: number; misses: number; hitRate: number | null; average: number | null };
 type VerifiedTrend = { last5?: VerifiedTrendSample; last10: VerifiedTrendSample; last20: VerifiedTrendSample };
 const FINDER_MAX_CANDIDATES = 120;
@@ -123,6 +124,9 @@ export default function Home() {
   const [finderThreshold, setFinderThreshold] = useState(70);
   const [finderSample, setFinderSample] = useState<10 | 20>(10);
   const [secureComparisons, setSecureComparisons] = useState<SecureOddsComparison[]>([]);
+  const [eliteDashboard, setEliteDashboard] = useState<EliteDashboardData | null>(null);
+  const [eliteDashboardStatus, setEliteDashboardStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [eliteDashboardError, setEliteDashboardError] = useState('');
   const [comparisonStatus, setComparisonStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [comparisonError, setComparisonError] = useState('');
   const [matchupOpponent, setMatchupOpponent] = useState('all');
@@ -996,27 +1000,39 @@ export default function Home() {
     }).sort((a,b) => b.last.observedAt.localeCompare(a.last.observedAt)).slice(0, 250);
   }, [oddsSamples, sport, market, side, sportsbook, query]);
 
-  // Dashboard summaries come from recorded data only, with a full 10-game sample.
-  // Collapse identical sportsbook offers to avoid treating the same prop as many trends.
-  const dashboardTrends = useMemo(() => {
-    const byProp = new Map<string, (typeof sportProps)[number]>();
-    for (const p of sportProps) {
-      if (p.source !== 'live' || p.stats.hit10?.total !== 10) continue;
-      const key = [normalize(p.player), p.marketKey, p.side, p.line, normalize(p.event), p.commence].join('|');
-      const previous = byProp.get(key);
-      if (!previous || p.odds > previous.odds) byProp.set(key, p);
+  // Elite research summaries are calculated from trusted server-side logs and cached odds.
+  // Browser-imported history and manual props never influence these Elite rankings.
+  useEffect(() => {
+    if (tab !== 'dashboard' || !hasElite) {
+      setEliteDashboard(null); setEliteDashboardStatus('idle'); setEliteDashboardError('');
+      return;
     }
-    return [...byProp.values()].sort((a,b) =>
-      (b.stats.hit10?.pct ?? 0) - (a.stats.hit10?.pct ?? 0) ||
-      a.player.localeCompare(b.player)).slice(0,5);
-  }, [sportProps]);
-  const dashboardCoverage = useMemo(() => {
-    const live = sportProps.filter(p => p.source === 'live');
-    const withHistory = live.filter(p => p.stats.games.length > 0).length;
-    const fullTen = live.filter(p => p.stats.hit10?.total === 10).length;
-    const uniquePlayers = new Set(live.map(p => normalize(p.player))).size;
-    return { live:live.length, withHistory, fullTen, uniquePlayers };
-  }, [sportProps]);
+    const controller = new AbortController();
+    setEliteDashboard(null); setEliteDashboardStatus('loading'); setEliteDashboardError('');
+    void (async () => {
+      try {
+        const result = await fetch(`/api/research/dashboard?sport=${sport}&season=${seasonView}`, {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal
+        });
+        const payload = await result.json() as Partial<EliteDashboardData> & { error?: string };
+        if (!result.ok || !payload.coverage || !Array.isArray(payload.trends)) {
+          throw new Error(payload.error || 'Elite dashboard verification failed.');
+        }
+        if (!controller.signal.aborted) {
+          setEliteDashboard({ coverage: payload.coverage, trends: payload.trends });
+          setEliteDashboardStatus('ready');
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setEliteDashboard(null); setEliteDashboardStatus('error');
+          setEliteDashboardError(error instanceof Error ? error.message : 'Elite dashboard unavailable.');
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [tab, hasElite, sport, seasonView]);
+  const dashboardCoverage = eliteDashboard?.coverage ?? { live: 0, uniquePlayers: 0, withHistory: 0, fullTen: 0 };
+  const dashboardTrends = eliteDashboard?.trends ?? [];
   const dashboardMovements = useMemo(() => movementRows.filter(row =>
     row.count > 1 && (row.lineDelta !== 0 || row.oddsDelta !== 0)).slice(0,4), [movementRows]);
 
@@ -1223,8 +1239,10 @@ export default function Home() {
                   <p>Observed data from your selected {seasonView === 'all' ? 'all-season' : seasonView} history. No generated picks or predictive probabilities.</p></div>
 
               </div>
+              {eliteDashboardStatus === 'loading' && <p role="status">Verifying Elite research with the server…</p>}
+              {eliteDashboardStatus === 'error' && <p role="alert">{eliteDashboardError}</p>}
               <div className="command-metrics">
-                <div><span><Database size={15}/> Live offers</span><strong>{dashboardCoverage.live}</strong><small>Player prop outcomes</small></div>
+                <div><span><Database size={15}/> Live offers</span><strong>{dashboardCoverage.live}</strong><small>Live sportsbook offers</small></div>
                 <div><span><Activity size={15}/> Players listed</span><strong>{dashboardCoverage.uniquePlayers}</strong><small>Distinct players</small></div>
                 <div><span><BarChart3 size={15}/> With history</span><strong>{dashboardCoverage.withHistory}</strong><small>Of {dashboardCoverage.live} live offers</small></div>
                 <div><span><ShieldCheck size={15}/> Full L10 samples</span><strong>{dashboardCoverage.fullTen}</strong><small>10 recorded games required</small></div>
@@ -1232,13 +1250,13 @@ export default function Home() {
               <div className="command-grid">
                 <div className="command-panel">
                   <div className="command-panel-head"><div><h3>Historical trend watch</h3><p>Highest observed Last 10 hit rates · complete samples</p></div><button onClick={() => setTab('finder')}>Smart Finder <ArrowUpRight size={15}/></button></div>
-                  {dashboardTrends.length ? dashboardTrends.map(p => (
+                  {dashboardTrends.length ? dashboardTrends.map(({prop: p, hits, games, rate}) => (
                     <button className="command-trend-row" key={p.id} onClick={() => setSelected(p)}>
                       <PlayerAvatar name={p.player} {...playerHeadshots.get(`${p.sport}|${normalize(p.player)}`)}/>
                       <span className="command-item-label"><strong>{p.player}</strong><small>{p.side} {p.line} {p.market} · {p.bookmaker}</small></span>
-                      <span className="command-rate">{p.stats.hit10?.pct}%<small>{p.stats.hit10?.hits}/10</small></span>
+                      <span className="command-rate">{rate}%<small>{hits}/{games}</small></span>
                     </button>
-                  )) : <p className="command-empty">No complete 10-game samples yet. Check your season selection or historical-data coverage.</p>}
+                  )) : <p className="command-empty">{eliteDashboardStatus === 'loading' ? 'Loading verified trends…' : eliteDashboardStatus === 'error' ? 'Verified trends unavailable.' : 'No complete 10-game samples yet. Check your season selection or historical-data coverage.'}</p>}
                 </div>
                 <div className="command-panel">
                   <div className="command-panel-head"><div><h3>Sportsbook price differences</h3><p>Same player, game, side and exact line</p></div><button onClick={() => setTab('odds')}>Compare <ArrowUpRight size={15}/></button></div>
