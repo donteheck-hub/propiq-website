@@ -53,7 +53,10 @@ async function snapshot(sport: Sport): Promise<Sample[]> {
   try { source = JSON.parse(await readFile(oddsFile, 'utf8')) as Record<string, SourceState>; }
   catch { throw new Error('Cached odds are not yet available.'); }
   const payload = source[sport]?.payload;
-  const updatedAt = payload?.updatedAt;
+  // Explicitly narrow the optional cached payload before reading its fields.
+  // This also prevents invalid or absent cached sport data from being processed.
+  if (!payload) throw new Error('No verified provider snapshot is available yet.');
+  const updatedAt = payload.updatedAt;
   if (typeof updatedAt !== 'string' || !Number.isFinite(Date.parse(updatedAt)) || Date.parse(updatedAt) > Date.now() + 60000 || !Array.isArray(payload.props)) {
     throw new Error('No verified provider snapshot is available yet.');
   }
