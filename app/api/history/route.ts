@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logSeason, normalize, validLogDate, type LogRow, type Sport } from '../../../lib/props';
+import { verifiedMembership } from '../../../lib/server-entitlements';
+import type { MembershipTier } from '../../../lib/entitlements';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,10 +88,10 @@ function numeric(value: string | undefined): number | null {
 
 function pushStat(
   output: LogRow[], sport: Sport, player: string, marketKey: string,
-  date: string, value: number | null, opponent: string, venue?: 'home' | 'away', nbaPlayerId?: number, nflHeadshotUrl?: string
+  date: string, value: number | null, opponent: string, venue?: 'home' | 'away', nbaPlayerId?: number
 ) {
   if (value === null || value < 0 || !player.trim() || !validLogDate(date)) return;
-  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue, ...(nbaPlayerId ? { nbaPlayerId } : {}), ...(nflHeadshotUrl ? { nflHeadshotUrl } : {}) });
+  output.push({ sport, player: player.trim(), marketKey, date, value, opponent, venue, ...(nbaPlayerId ? { nbaPlayerId } : {}) });
 }
 
 function nbaRows(input: CsvRow[]): LogRow[] {
@@ -119,20 +121,6 @@ function nbaRows(input: CsvRow[]): LogRow[] {
   return output;
 }
 
-// Only accept image hosts used by NFL/nflverse statistical datasets; never
-// render arbitrary URLs supplied by a CSV file as external browser content.
-function verifiedNflHeadshot(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value.trim());
-    const hostname = url.hostname.toLowerCase();
-    const trusted = hostname === 'static.www.nfl.com' || hostname === 'static.clubs.nfl.com' ||
-      hostname === 'static.nfl.com' || hostname === 'a.espncdn.com' || hostname === 'cdn.espn.com' ||
-      hostname.endsWith('.nfl.com') || hostname.endsWith('.espncdn.com');
-    return url.protocol === 'https:' && trusted ? url.toString() : undefined;
-  } catch { return undefined; }
-}
-
 function nflRows(input: CsvRow[]): LogRow[] {
   const output: LogRow[] = [];
   for (const row of input) {
@@ -144,14 +132,13 @@ function nflRows(input: CsvRow[]): LogRow[] {
     // YYYY-Www key retains correct chronological sorting without inventing one.
     const date = `${season}-W${String(week).padStart(2, '0')}`;
     const opponent = row.opponent_team || '';
-    const headshot = verifiedNflHeadshot(row.headshot_url);
-    pushStat(output, 'NFL', player, 'player_pass_yds', date, numeric(row.passing_yards), opponent, undefined, undefined, headshot);
-    pushStat(output, 'NFL', player, 'player_rush_yds', date, numeric(row.rushing_yards), opponent, undefined, undefined, headshot);
-    pushStat(output, 'NFL', player, 'player_reception_yds', date, numeric(row.receiving_yards), opponent, undefined, undefined, headshot);
-    pushStat(output, 'NFL', player, 'player_receptions', date, numeric(row.receptions), opponent, undefined, undefined, headshot);
-    pushStat(output, 'NFL', player, 'player_pass_tds', date, numeric(row.passing_tds), opponent, undefined, undefined, headshot);
-    pushStat(output, 'NFL', player, 'player_rush_attempts', date, numeric(row.carries ?? row.rushing_attempts), opponent, undefined, undefined, headshot);
-    pushStat(output, 'NFL', player, 'player_pass_completions', date, numeric(row.completions), opponent, undefined, undefined, headshot);
+    pushStat(output, 'NFL', player, 'player_pass_yds', date, numeric(row.passing_yards), opponent);
+    pushStat(output, 'NFL', player, 'player_rush_yds', date, numeric(row.rushing_yards), opponent);
+    pushStat(output, 'NFL', player, 'player_reception_yds', date, numeric(row.receiving_yards), opponent);
+    pushStat(output, 'NFL', player, 'player_receptions', date, numeric(row.receptions), opponent);
+    pushStat(output, 'NFL', player, 'player_pass_tds', date, numeric(row.passing_tds), opponent);
+    pushStat(output, 'NFL', player, 'player_rush_attempts', date, numeric(row.carries ?? row.rushing_attempts), opponent);
+    pushStat(output, 'NFL', player, 'player_pass_completions', date, numeric(row.completions), opponent);
   }
   return output;
 }
@@ -237,9 +224,25 @@ async function getHistory(sport: Sport): Promise<HistoryResult> {
   finally { delete inflight[sport]; }
 }
 
-function filterHistory(payload: HistoryResult, players: string[], season: number | 'all'): HistoryResult {
+function filterHistory(payload: HistoryResult, players: string[], season: number | 'all', tier: MembershipTier): HistoryResult {
   const names = new Set(players.map(p => normalize(p.trim())).filter(Boolean));
-  const rows = payload.rows.filter(row => names.has(normalize(row.player.trim())) && (season === 'all' || logSeason(row) === season));
+  const matching = payload.rows.filter(row => names.has(normalize(row.player.trim())) && (season === 'all' || logSeason(row) === season));
+  // Only the Elite tier may retrieve unrestricted player-stat history.
+  // Free keeps Last 5/10; Pro keeps Last 20 for the historical trend finder.
+  // Cap independently by player, stat, and season to preserve each stat's timeline.
+  const limit = tier === 'elite' ? Number.POSITIVE_INFINITY : tier === 'pro' ? 20 : 10;
+  const grouped = new Map<string, LogRow[]>();
+  for (const row of matching) {
+    const key = `${normalize(row.player)}|${row.marketKey}|${logSeason(row)}`;
+    const group = grouped.get(key);
+    if (group) group.push(row);
+    else grouped.set(key, [row]);
+  }
+  const rows: LogRow[] = [];
+  for (const group of grouped.values()) {
+    group.sort((a, b) => b.date.localeCompare(a.date));
+    rows.push(...group.slice(0, limit));
+  }
   return {
     ...payload,
     rows,
@@ -258,7 +261,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body: unknown = await request.json();
+    // Avoid parsing arbitrarily large request bodies from anonymous clients.
+    const contentLength = Number(request.headers.get('content-length') || 0);
+    if (contentLength > 32_768) return NextResponse.json({ message: 'Request is too large.' }, { status: 413 });
+    const text = await request.text();
+    if (text.length > 32_768) return NextResponse.json({ message: 'Request is too large.' }, { status: 413 });
+    const body: unknown = JSON.parse(text);
     if (!body || typeof body !== 'object') return NextResponse.json({ message: 'Invalid JSON' }, { status: 400 });
     const input = body as { sport?: string; players?: unknown; season?: unknown };
     if (input.sport !== 'NBA' && input.sport !== 'NFL') return NextResponse.json({ message: 'sport must be NBA or NFL' }, { status: 400 });
@@ -274,9 +282,11 @@ export async function POST(request: NextRequest) {
         ? input.season : 'all';
     const players = [...new Set(input.players as string[])];
     if (!players.length) return NextResponse.json({ rows: [], message: 'No players requested' });
+    const membership = await verifiedMembership(request);
+    // An unavailable membership backend must not accidentally grant paid access.
     const history = await getHistory(sport);
-    return NextResponse.json(filterHistory(history, players, season), {
-      headers: { 'Cache-Control': 'private, no-store' }
+    return NextResponse.json(filterHistory(history, players, season, membership.tier), {
+      headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' }
     });
   } catch (error) {
     return NextResponse.json({ rows: [], message: error instanceof Error ? error.message : 'History error' }, { status: 502 });
