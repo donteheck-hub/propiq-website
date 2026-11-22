@@ -445,3 +445,14 @@ button.command-trend-row:hover,button.command-compare-row:hover{background:#1b30
 .premium-gate p{font-size:13px;color:#adc4d0;line-height:1.7;max-width:550px;margin:0}
 .premium-gate-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:11px;margin-top:9px}
 @media(max-width:600px){.membership-strip button{margin-left:0}.premium-gate{padding:35px 18px}.premium-gate h2{font-size:20px}}
+
+/* Phase 3 security: independently verified Smart Finder drawer summary */
+.verified-trend-panel { margin: 15px 0; padding: 16px; border: 1px solid rgba(62, 202, 189, .35); background: rgba(31, 110, 113, .12); border-radius: 12px; color: #dcecf2; }
+.verified-trend-panel > strong { display: flex; align-items: center; gap: 9px; color: #69dbc9; margin-bottom: 10px; }
+.verified-trend-panel p { margin: 7px 0; line-height: 1.5; }
+.verified-trend-panel > small { display: block; opacity: .78; line-height: 1.5; margin-top: 12px; }
+.verified-trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.verified-trend-grid > div { display: flex; flex-direction: column; padding: 12px; border: 1px solid rgba(130, 188, 206, .24); border-radius: 9px; gap: 4px; }
+.verified-trend-grid small { color: #9ab8ca; }
+.verified-trend-grid b { font-size: 1.55rem; color: #75e5d0; }
+.verified-trend-grid span { font-size: .8rem; color: #a8c4ce; }

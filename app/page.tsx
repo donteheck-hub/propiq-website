@@ -62,6 +62,10 @@ type LiveStatus = 'loading' | 'live' | 'cached' | 'stale' | 'unavailable';
 type SportsbookFilter = 'both' | 'draftkings' | 'fanduel';
 type SortField = 'last5' | 'last10' | 'average';
 
+type VerifiedTrendSample = { games: number; hits: number; pushes: number; misses: number; hitRate: number | null; average: number | null };
+type VerifiedTrend = { last10: VerifiedTrendSample; last20: VerifiedTrendSample };
+
+
 const profitOn100 = (odds: number) => odds > 0 ? odds : 10000 / Math.abs(odds);
 
 const normalizeBook = (name: string) =>
@@ -112,6 +116,9 @@ export default function Home() {
   const [matchupOpponent, setMatchupOpponent] = useState('all');
   const [selected, setSelected] = useState<Prop | null>(null);
   const [opponentView, setOpponentView] = useState('all');
+  const [verifiedTrend, setVerifiedTrend] = useState<VerifiedTrend | null>(null);
+  const [verifiedTrendStatus, setVerifiedTrendStatus] = useState<'idle' | 'loading' | 'verified' | 'error'>('idle');
+  const [verifiedTrendMessage, setVerifiedTrendMessage] = useState('');
   const [defenseTeam, setDefenseTeam] = useState('');
   const [defenseRows, setDefenseRows] = useState<DefenseRow[]>([]);
   const [defenseError, setDefenseError] = useState('');
@@ -618,6 +625,52 @@ export default function Home() {
   const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const displayed = useMemo(() => visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE), [visible, safePage]);
+  // Smart Finder drawer: validate the selected line against server-held history.
+  // This call never uses The Odds API. Results are displayed as a separate
+  // verification panel until the whole finder is migrated to server execution.
+  useEffect(() => {
+    if (!selected || tab !== 'finder' || !hasPro || selected.source !== 'live') {
+      setVerifiedTrend(null);
+      setVerifiedTrendStatus('idle');
+      setVerifiedTrendMessage('');
+      return;
+    }
+    const controller = new AbortController();
+    setVerifiedTrend(null);
+    setVerifiedTrendStatus('loading');
+    setVerifiedTrendMessage('');
+    const selectedSeason = seasonView === 'all' ? 'all' : seasonFor(selected.sport);
+    void (async () => {
+      try {
+        const response = await fetch('/api/history', {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'trend-summary', sport: selected.sport, season: selectedSeason,
+            trends: [{ player: selected.player, marketKey: selected.marketKey,
+              line: selected.line, side: selected.side }]
+          }), signal: controller.signal
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(typeof payload?.message === 'string' ? payload.message : `Verification failed (HTTP ${response.status}).`);
+        const trend = payload?.trends?.[0];
+        if (!trend || typeof trend.last10?.games !== 'number' || typeof trend.last20?.games !== 'number') {
+          throw new Error('Invalid server verification response.');
+        }
+        if (!controller.signal.aborted) {
+          setVerifiedTrend(trend as VerifiedTrend);
+          setVerifiedTrendStatus('verified');
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setVerifiedTrendStatus('error');
+          setVerifiedTrendMessage(error instanceof Error ? error.message : 'Server verification unavailable.');
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [selected, tab, hasPro, seasonView, seasonFor]);
+
   const selectedStats = useMemo(() => selected ? analyze(selected,
     logIndex.get(`${selected.sport}|${normalize(selected.player)}|${selected.marketKey}`) || [], seasonFor(selected.sport)
   ) : null, [selected, logIndex, seasonFor]);
@@ -1536,6 +1589,23 @@ export default function Home() {
               </div>
               <Target size={28} />
             </div>
+
+            {tab === 'finder' && selected.source === 'live' && (
+              <section className="verified-trend-panel" aria-live="polite">
+                <strong><ShieldCheck size={16} /> Server-verified Smart Finder result</strong>
+                {verifiedTrendStatus === 'loading' && <p>Checking this prop against server-side game logs…</p>}
+                {verifiedTrendStatus === 'error' && <p>Verification unavailable: {verifiedTrendMessage}. Browser values are not verified.</p>}
+                {verifiedTrendStatus === 'verified' && verifiedTrend && (
+                  <div className="verified-trend-grid">
+                    <div><small>LAST 10 · SERVER</small><b>{verifiedTrend.last10.hitRate === null ? '—' : `${verifiedTrend.last10.hitRate}%`}</b>
+                      <span>{verifiedTrend.last10.hits}/{verifiedTrend.last10.games} hits{verifiedTrend.last10.games < 10 ? ' · partial' : ''}</span></div>
+                    <div><small>LAST 20 · SERVER</small><b>{verifiedTrend.last20.hitRate === null ? '—' : `${verifiedTrend.last20.hitRate}%`}</b>
+                      <span>{verifiedTrend.last20.hits}/{verifiedTrend.last20.games} hits{verifiedTrend.last20.games < 20 ? ' · partial' : ''}</span></div>
+                  </div>
+                )}
+                <small>Historical observations, not predicted win probabilities. Finder list rankings are still calculated in the browser.</small>
+              </section>
+            )}
 
             <div className="season-summary">
               <strong>{seasonView === 'all' ? 'All available seasons' : `Season ${seasonLabel(selected.sport, seasonFor(selected.sport)!)}`}</strong>
